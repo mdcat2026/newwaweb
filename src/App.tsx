@@ -227,15 +227,19 @@ export default function App() {
 
   //  --- LOGIKA FORWARD SATUAN DIPERBAIKI (MENYERTAKAN LINK CLOUDINARY) ---
   const handleForwardToWA = async (msg) => {
-    // 1. Coba gunakan fitur "Share Bawaan HP" jika ada file dan dibuka di HP
+    // 1. Coba gunakan fitur "Share Bawaan HP"
     if (msg.fileData && navigator.canShare) {
       try {
-        // Mengubah URL gambar/file dari Cloudinary menjadi file utuh sementara
         const response = await fetch(msg.fileData);
         const blob = await response.blob();
+        
+        // SMART FALLBACK: Jika ukuran file > 5MB, paksa gunakan Link agar HP tidak hang
+        if (blob.size > 5 * 1024 * 1024) {
+           throw new Error("File terlalu besar, pindah ke mode Link");
+        }
+
         const file = new File([blob], msg.fileName || 'file', { type: blob.type });
 
-        // Memanggil menu Share bawaan Android/iOS
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({
             title: msg.fileName,
@@ -243,17 +247,17 @@ export default function App() {
             files: [file]
           });
           setOpenMenuId(null);
-          return; // Berhenti di sini jika berhasil share file asli!
+          return; // Berhenti di sini jika sukses kirim file asli
         }
       } catch (error) {
-        console.log("Perangkat tidak mendukung direct share file, kembali ke mode link.");
+        console.log("Beralih ke mode Link karena file besar atau perangkat tidak mendukung.");
       }
     }
 
-    // 2. Jika di PC atau HP gagal memproses file, kembali ke metode Teks + Link
+    // 2. Fallback: Jika di PC, HP gagal, atau file > 5MB, otomatis pakai metode Link
     let waText = msg.text || '';
     if (msg.fileName) {
-      waText = `📁 *[File: ${msg.fileName}]*\n🔗 Link Unduh: ${msg.fileData}\n\n${waText}`;
+      waText = `📁 *[File: ${msg.fileName}]*\n🔗 Link: ${msg.fileData}\n\n${waText}`;
     }
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`, '_blank');
     setOpenMenuId(null);
