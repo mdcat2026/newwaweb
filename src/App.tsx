@@ -5,7 +5,9 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signO
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, MoreVertical, MessageSquare, CheckSquare, Square } from 'lucide-react';
 
-// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
+// ==========================================
+// 1. TEMPEL FIREBASE CONFIG ANDA DI BAWAH INI
+// ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyDL0S4x9EXO5GCXORMHAzwdSRnFAKqcSpc",
   authDomain: "wac-test-mode.firebaseapp.com",
@@ -16,10 +18,11 @@ const firebaseConfig = {
   measurementId: "G-9V5ZEQHC98"
 };
 
-
-// 2. TEMPEL KUNCI CLOUDINARY ANDA DI SINI
-const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // contoh: dxxxyyyzz
-const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // contoh: ml_default
+// ==========================================
+// 2. TEMPEL KUNCI CLOUDINARY ANDA DI BAWAH INI
+// ==========================================
+const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // contoh: 'm8cnadmw' (Tanpa spasi)
+const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // contoh: 'Newwaweb' (Sesuai huruf besar/kecil)
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -44,6 +47,11 @@ export default function App() {
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
+  
+  // STATE UNTUK LAYAR PRA-KIRIM (Pre-send Preview ala WA)
+  const [pendingUploadFile, setPendingUploadFile] = useState(null);
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
+  const [uploadCaption, setUploadCaption] = useState('');
   
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -122,49 +130,82 @@ export default function App() {
     }
   };
 
-  // --- UPLOAD MENGGUNAKAN CLOUDINARY & TEKS CAPTION ---
-  const handleFileProcessing = async (file) => {
-    const caption = window.prompt("Ketik teks untuk file ini (kosongkan jika tidak perlu):", "");
-    if (caption === null) return; // Batal jika klik Cancel
+  // --- LOGIKA MEMILIH FILE & MEMBUKA LAYAR PREVIEW ---
+  const handleFileSelection = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    if (CLOUDINARY_CLOUD_NAME === 'GANTI_DENGAN_CLOUD_NAME_ANDA') {
+    if (CLOUDINARY_CLOUD_NAME.includes('GANTI')) {
       alert("Harap masukkan pengaturan Cloudinary di dalam kode terlebih dahulu!");
       return;
     }
 
+    setPendingUploadFile(file);
+    setUploadCaption('');
+    
+    // Buat URL sementara untuk preview di layar pra-kirim
+    if (file.type.startsWith('image/')) {
+      setPendingPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setPendingPreviewUrl(null);
+    }
+    e.target.value = ''; 
+  };
+
+  // --- LOGIKA UPLOAD KE CLOUDINARY DARI LAYAR PREVIEW ---
+  const confirmUpload = async () => {
+    if (!pendingUploadFile) return;
     setIsUploading(true);
-    const isImage = file.type.startsWith('image/');
+    
+    const isImage = pendingUploadFile.type.startsWith('image/');
+    
+    // PENTING: File dokumen seperti PDF/XLSX butuh tipe 'raw', sedangkan gambar butuh tipe 'image'
+    const resourceType = isImage ? 'image' : 'raw';
     
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', pendingUploadFile);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
 
     try {
-      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`, {
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`, {
         method: 'POST',
         body: formData
       });
+      
       const data = await response.json();
 
       if (data.secure_url) {
+        // Jika sukses, simpan ke Firebase Database
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
-          text: caption || '', 
+          text: uploadCaption || '', 
           fileData: data.secure_url, 
-          fileName: file.name || 'Lampiran', 
+          fileName: pendingUploadFile.name || 'Lampiran', 
           isImage: isImage, 
           uid: user.uid, 
           senderName: user.displayName, 
           senderAvatar: user.photoURL, 
           timestamp: serverTimestamp()
         });
+        
+        // Tutup layar pra-kirim setelah sukses
+        setPendingUploadFile(null);
+        setPendingPreviewUrl(null);
+        setUploadCaption('');
       } else {
-        throw new Error("Upload gagal");
+        // Tangkap pesan error ASLI dari Cloudinary jika gagal
+        throw new Error(data.error?.message || "Upload gagal dengan pesan tak dikenal.");
       }
     } catch (error) {
       console.error("Cloudinary error:", error);
-      alert("Gagal mengunggah file ke Cloudinary.");
+      alert(`GAGAL UPLOAD!\n\nPesan dari Cloudinary: "${error.message}"\n\nCek kembali Cloud Name dan Preset Anda.`);
     }
     setIsUploading(false);
+  };
+
+  const cancelUpload = () => {
+    setPendingUploadFile(null);
+    setPendingPreviewUrl(null);
+    setUploadCaption('');
   };
 
   const formatText = (text) => {
@@ -193,10 +234,8 @@ export default function App() {
     }
   };
 
-  // --- FORMAT FORWARD WHATSAPP DIPERBAIKI ---
   const executeMultiForward = () => {
     const msgsToForward = messages.filter(m => selectedMessages.includes(m.id));
-    
     let finalWaText = msgsToForward.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
@@ -228,7 +267,65 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
-      {/* KOTAK PRATINJAU / PREVIEW MODAL */}
+      {/* ==================================================== */}
+      {/* 1. LAYAR PRA-KIRIM FILE (PRE-SEND PREVIEW) SEPERTI WA */}
+      {/* ==================================================== */}
+      {pendingUploadFile && (
+        <div className="fixed inset-0 z-[300] bg-[#0b141a] flex flex-col">
+          {/* Header */}
+          <div className="h-16 flex items-center px-4 shrink-0 bg-[#202c33] shadow-md z-10">
+            <button onClick={cancelUpload} className="text-[#aebac1] p-2 hover:bg-[#2a3942] rounded-full transition">
+              <X size={26} />
+            </button>
+            <span className="text-[#e9edef] ml-4 font-medium text-[17px]">Kirim ke {activeGroup.name}</span>
+          </div>
+          
+          {/* Area Preview File Tengah */}
+          <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
+            {pendingPreviewUrl ? (
+              <img src={pendingPreviewUrl} alt="Preview" className="max-w-full max-h-full object-contain drop-shadow-2xl" />
+            ) : (
+              <div className="flex flex-col items-center gap-6">
+                <div className="p-10 bg-[#202c33] rounded-2xl shadow-lg border border-[#2a3942]">
+                  <FileText size={100} className="text-[#8696a0]" />
+                </div>
+                <div className="text-center">
+                  <p className="text-[#e9edef] font-medium text-lg max-w-md truncate">{pendingUploadFile.name}</p>
+                  <p className="text-[#8696a0] mt-1">{Math.round(pendingUploadFile.size / 1024)} KB</p>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Input Caption Bawah */}
+          <div className="bg-[#202c33] px-4 py-4 flex items-end gap-3 shrink-0">
+            <div className="flex-1 bg-[#2a3942] rounded-xl flex items-center pl-5 pr-2 focus-within:bg-[#2a3942] shadow-inner">
+              <textarea 
+                value={uploadCaption} 
+                onChange={(e) => {
+                  setUploadCaption(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                }} 
+                rows={1} 
+                placeholder="Tambahkan keterangan..." 
+                className="flex-1 py-3.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]" 
+              />
+            </div>
+            <button 
+              onClick={confirmUpload} 
+              disabled={isUploading} 
+              className="bg-[#00a884] text-[#111b21] p-3.5 rounded-full hover:bg-[#008f6f] transition flex items-center justify-center shadow-lg shrink-0 mb-0.5"
+            >
+              {isUploading ? <div className="w-6 h-6 border-[3px] border-[#111b21] border-t-transparent rounded-full animate-spin"></div> : <Send size={24} />}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 2. MODAL PREVIEW FILE UNTUK PESAN YANG SUDAH TERKIRIM */}
+      {/* ==================================================== */}
       {previewMedia && (
         <div className="fixed inset-0 z-[200] bg-[#0b141a]/95 flex flex-col items-center justify-center p-4">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
@@ -269,7 +366,7 @@ export default function App() {
         <div className="p-2 border-b border-[#222d34] bg-[#111b21] shrink-0">
           <div className="bg-[#202c33] flex items-center rounded-lg px-4 py-1.5 border-b-2 border-transparent focus-within:border-[#00a884] transition-colors">
             <Search size={18} className="text-[#8696a0] shrink-0" />
-            <input type="text" placeholder="Cari atau mulai obrolan baru" className="bg-transparent border-none outline-none ml-5 w-full text-sm text-[#e9edef] placeholder-[#8696a0]" />
+            <input type="text" placeholder="Cari grup atau obrolan..." className="bg-transparent border-none outline-none ml-5 w-full text-sm text-[#e9edef] placeholder-[#8696a0]" />
           </div>
         </div>
 
@@ -325,7 +422,6 @@ export default function App() {
             return (
               <div key={msg.id} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
                 
-                {/* CHECKBOX DIPERBAIKI (Ada background putih) */}
                 {isSelectionMode && (
                   <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] bg-white rounded flex items-center justify-center shrink-0 shadow-sm">
                     {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-gray-400" />}
@@ -427,14 +523,18 @@ export default function App() {
           <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10 border-t border-[#222d34]">
             <div className="flex gap-1 shrink-0 mb-1">
               <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
-              <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
-              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading || editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${(isUploading || editingMessage) ? 'opacity-50' : ''}`}>
-                {isUploading ? <div className="w-6 h-6 border-2 border-[#8696a0] border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={24} className="transform -rotate-45" />}
+              
+              {/* TOMBOL LAMPIRAN DENGAN TRIGGER MENU PREVIEW */}
+              <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${editingMessage ? 'opacity-50' : ''}`}>
+                <Paperclip size={24} className="transform -rotate-45" />
               </button>
             </div>
+            
             <div className="flex-1 bg-[#2a3942] rounded-lg mb-1 flex items-center pl-4 pr-1">
               <textarea ref={textareaRef} value={newMessage} onChange={handleInputResize} onKeyDown={handleKeyDown} rows={1} placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"} className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]" />
             </div>
+            
             <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors"><Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} /></button>
           </form>
         )}
