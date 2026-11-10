@@ -19,10 +19,11 @@ const firebaseConfig = {
 };
 
 // ==========================================
-// 2. TEMPEL KUNCI CLOUDINARY ANDA DI SINI
+// 2. PENGATURAN CLOUDINARY & ADMIN
 // ==========================================
-const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // Sesuai gambar Anda
-const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // Sesuai gambar Anda
+const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
+const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
+const ADMIN_EMAIL = 'buerfood24@gmail.com'; // GANTI: Email ini bisa hapus pesan siapa saja!
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -40,9 +41,8 @@ export default function App() {
   const [newMessage, setNewMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   
-  // State Navigasi Antarmuka
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
-  const [showGroupInfo, setShowGroupInfo] = useState(false); // STATE BARU UNTUK INFO GRUP
+  const [showGroupInfo, setShowGroupInfo] = useState(false); 
   
   const [openMenuId, setOpenMenuId] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
@@ -51,7 +51,6 @@ export default function App() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
   
-  // STATE UNTUK LAYAR PRA-KIRIM (Pre-send Preview ala WA)
   const [pendingUploadFile, setPendingUploadFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [uploadCaption, setUploadCaption] = useState('');
@@ -59,6 +58,8 @@ export default function App() {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
+
+  const isAdmin = user?.email === ADMIN_EMAIL;
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => setUser(currentUser));
@@ -75,7 +76,7 @@ export default function App() {
     });
     setIsSelectionMode(false);
     setSelectedMessages([]);
-    setShowGroupInfo(false); // Tutup info grup jika pindah grup
+    setShowGroupInfo(false); 
     return () => unsubscribe();
   }, [activeGroup.id, user]);
 
@@ -134,7 +135,6 @@ export default function App() {
     }
   };
 
-  // --- LOGIKA MEMILIH FILE & MEMBUKA LAYAR PREVIEW (TANPA POPUP JELEK) ---
   const handleFileSelection = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -155,13 +155,11 @@ export default function App() {
     e.target.value = ''; 
   };
 
-  // --- LOGIKA UPLOAD KE CLOUDINARY ---
   const confirmUpload = async () => {
     if (!pendingUploadFile) return;
     setIsUploading(true);
     
     const isImage = pendingUploadFile.type.startsWith('image/');
-    // Menggunakan 'image' untuk gambar, dan 'raw' untuk dokumen (Excel, PDF, dll)
     const resourceType = isImage ? 'image' : 'raw';
     
     const formData = new FormData();
@@ -207,6 +205,26 @@ export default function App() {
     setUploadCaption('');
   };
 
+  // --- SOLUSI DOWNLOAD: MEMAKSA NAMA FILE ASLI ---
+  const handleForceDownload = async (e, url, filename) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("Gagal mode paksa, menggunakan unduhan default:", err);
+      window.open(url, '_blank');
+    }
+  };
+
   const formatText = (text) => {
     if (!text) return { __html: '' };
     let formatted = text
@@ -233,14 +251,40 @@ export default function App() {
     }
   };
 
-  // --- LOGIKA FORWARD (Export ke WA ASLI) ---
-  const executeForward = (msgsToForward) => {
+  // --- SOLUSI FORWARD: FILE ASLI JIKA < 5MB ATAU LINK FORMAT BARU ---
+  const executeForward = async (msgsToForward) => {
+    // Coba Share File Bawaan HP jika HANYA 1 pesan dan ukurannya di bawah 5MB
+    if (msgsToForward.length === 1 && msgsToForward[0].fileData && navigator.canShare) {
+      try {
+        const msg = msgsToForward[0];
+        const response = await fetch(msg.fileData);
+        const blob = await response.blob();
+        
+        if (blob.size <= 5 * 1024 * 1024) { // Cek File < 5MB
+          const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              title: msg.fileName,
+              text: msg.text || '',
+              files: [file]
+            });
+            setIsSelectionMode(false);
+            setSelectedMessages([]);
+            setOpenMenuId(null);
+            return; // Sukses kirim file asli!
+          }
+        }
+      } catch (error) {
+        console.log("Perangkat/Browser tidak mendukung direct share, kembali ke mode Link.");
+      }
+    }
+
+    // Metode Teks/Link (Untuk banyak pesan atau file > 5MB)
     let finalWaText = msgsToForward.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
       if (m.fileName) {
-          // Hanya bisa menyertakan Link karena batasan WA
-          return `${header}\n📁 [File: ${m.fileName}]\n🔗 Link Unduh: ${m.fileData}\n${textSegment}`;
+          return `${header}\n📁 ${m.fileName} -> dapat di akses di : ${m.fileData}\n${textSegment}`;
       }
       return `${header}\n${textSegment}`;
     }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
@@ -318,7 +362,7 @@ export default function App() {
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
             <span className="text-[#e9edef] font-medium truncate max-w-[70%]">{previewMedia.fileName}</span>
             <div className="flex items-center gap-4">
-              <a href={previewMedia.fileData} download={previewMedia.fileName} target="_blank" rel="noopener noreferrer" className="text-[#e9edef] hover:text-[#00a884] transition p-2"><Download size={26} /></a>
+              <a href={previewMedia.fileData} onClick={(e) => handleForceDownload(e, previewMedia.fileData, previewMedia.fileName)} className="text-[#e9edef] hover:text-[#00a884] transition p-2"><Download size={26} /></a>
               <button onClick={() => setPreviewMedia(null)} className="text-[#e9edef] hover:text-red-500 transition p-2"><X size={30} /></button>
             </div>
           </div>
@@ -369,7 +413,6 @@ export default function App() {
       {/* 4. AREA CHAT TENGAH */}
       <div className={`${isMobileChatOpen && !showGroupInfo ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative min-w-0`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
-        {/* Header Ruang Chat */}
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34] cursor-pointer" onClick={() => setShowGroupInfo(!showGroupInfo)}>
           <div className="flex items-center min-w-0">
             <button onClick={(e) => { e.stopPropagation(); setIsMobileChatOpen(false); }} className="md:hidden mr-3 text-[#aebac1] p-1"><ArrowLeft size={24} /></button>
@@ -387,7 +430,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Ruang Pesan Utama */}
         <div className="flex-1 overflow-y-auto p-4 md:px-16 flex flex-col gap-1 relative z-0 pb-4">
           {messages.map((msg, index) => {
             const isMe = msg.uid === user.uid;
@@ -437,14 +479,16 @@ export default function App() {
                           <CheckSquare size={18} /> Pilih banyak pesan
                         </button>
                         {isMe && (
-                          <>
-                            <button onClick={() => startEditing(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                              <Edit2 size={18} /> Edit pesan
-                            </button>
-                            <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                              <Trash2 size={18} /> Hapus pesan
-                            </button>
-                          </>
+                          <button onClick={() => startEditing(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                            <Edit2 size={18} /> Edit pesan
+                          </button>
+                        )}
+                        
+                        {/* TOMBOL HAPUS (MUNCUL JIKA ANDA PENGIRIM ATAU JIKA ANDA ADMIN) */}
+                        {(isMe || isAdmin) && (
+                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                            <Trash2 size={18} /> Hapus pesan
+                          </button>
                         )}
                       </div>
                     )}
@@ -479,7 +523,6 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Form / Mode Forward */}
         {isSelectionMode ? (
           <div className="bg-[#202c33] px-4 py-3 flex justify-between items-center z-10 shadow-lg border-t border-[#222d34]">
             <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="text-[#00a884] font-medium p-2 hover:bg-[#2a3942] rounded-lg transition">Batal</button>
@@ -513,18 +556,15 @@ export default function App() {
           </div>
 
           <div className="flex-1 overflow-y-auto bg-[#0b141a]">
-            {/* Profil Grup */}
             <div className="flex flex-col items-center py-8 bg-[#111b21] mb-2 shadow-sm">
               <img src={activeGroup.avatar} alt="Avatar" className="w-48 h-48 rounded-full mb-4 object-cover" />
               <h2 className="text-[#e9edef] text-xl font-medium">{activeGroup.name}</h2>
               <p className="text-[#8696a0] text-sm mt-1">Grup Pribadi</p>
             </div>
 
-            {/* Folder Media & Dokumen */}
             <div className="bg-[#111b21] p-4 shadow-sm min-h-[300px]">
               <h3 className="text-[#8696a0] text-sm mb-4">Media dan Dokumen ({messages.filter(m => m.fileData).length})</h3>
               
-              {/* Gambar / Foto */}
               <div className="grid grid-cols-3 gap-1.5 mb-4">
                 {messages.filter(m => m.fileData && m.isImage).map(m => (
                   <div key={m.id} className="aspect-square bg-[#202c33] relative cursor-pointer" onClick={() => setPreviewMedia(m)}>
@@ -533,7 +573,6 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Dokumen */}
               <div className="flex flex-col gap-2">
                 {messages.filter(m => m.fileData && !m.isImage).map(m => (
                   <div key={m.id} onClick={() => setPreviewMedia(m)} className="flex items-center gap-3 p-3 bg-[#202c33] rounded-lg cursor-pointer hover:bg-[#2a3942] transition">
@@ -545,10 +584,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              
-              {messages.filter(m => m.fileData).length === 0 && (
-                <p className="text-[#8696a0] text-center mt-10 text-sm">Tidak ada media atau dokumen</p>
-              )}
             </div>
           </div>
         </div>
