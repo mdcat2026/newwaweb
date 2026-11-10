@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, BellRing, Smartphone, Star } from 'lucide-react';
+// Tambahan 'increment' untuk menghitung pesan belum terbaca dengan akurat di database
+import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -52,13 +53,9 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  const [notifications, setNotifications] = useState([]);
-  const [localReadStatus, setLocalReadStatus] = useState({});
-  const [unreadCounts, setUnreadCounts] = useState({}); 
-  
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
-  const [forwardTargets, setForwardTargets] = useState([]); // Array untuk multi-forward
+  const [forwardTargets, setForwardTargets] = useState([]); 
   
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -100,53 +97,52 @@ export default function App() {
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
     const unsub = onSnapshot(qRooms, (snapshot) => {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const filtered = rooms.filter(r => r.type === 'group' || (r.type === 'private' && r.participants?.includes(user.uid)));
       
-      let newUnreadCounts = { ...unreadCounts };
+      const processedRooms = [];
       
-      const processedRooms = filtered.map(room => {
-        // FIX BUG: NAMA DIRI SENDIRI DI JAPRI
-        if (room.type === 'private') {
-           const otherParticipantUid = room.participants.find(uid => uid !== user.uid);
-           const otherParticipantName = room.participantNames?.[room.participants.indexOf(otherParticipantUid)];
-           const otherParticipantPhoto = contacts.find(c => c.uid === otherParticipantUid)?.photo || 'https://api.dicebear.com/7.x/initials/svg?seed=user';
-           room.displayAvatar = otherParticipantPhoto;
-           room.displayName = otherParticipantName || 'Pengguna';
-        } else {
-           room.displayAvatar = room.avatar;
-           room.displayName = room.name;
-        }
-
-        const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
-        const readTime = localReadStatus[room.id] || 0;
+      rooms.forEach(room => {
+        const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
         
-        if (roomTime > readTime && room.lastSenderId !== user.uid) {
-           if (activeGroup?.id !== room.id) {
-             showNotification(room.displayName, room.lastMessage);
-             newUnreadCounts[room.id] = (newUnreadCounts[room.id] || 0) + 1; 
+        // FIX BUG GHOST ROOM: Ruangan disembunyikan dari penerima sampai ada pesan masuk
+        const hasMessages = !!room.lastMessage;
+        const isCreator = room.createdBy === user.uid;
+        
+        if (isParticipant && (hasMessages || isCreator)) {
+           if (room.type === 'private') {
+              const otherUid = room.participants.find(uid => uid !== user.uid);
+              const otherName = room.participantNames?.[room.participants.indexOf(otherUid)];
+              const otherPhoto = contacts.find(c => c.uid === otherUid)?.photo || 'https://api.dicebear.com/7.x/initials/svg?seed=user';
+              room.displayAvatar = otherPhoto;
+              room.displayName = otherName || 'Pengguna';
+           } else {
+              room.displayAvatar = room.avatar;
+              room.displayName = room.name;
            }
+           processedRooms.push(room);
         }
-        return room;
       });
       
-      setUnreadCounts(newUnreadCounts);
       setChatRooms(processedRooms);
     });
     return () => unsub();
-  }, [user, activeGroup, localReadStatus, contacts]);
+  }, [user, contacts]);
 
   useEffect(() => {
     if (!user || !activeGroup) return;
+    
+    // FIX BUG UNREAD COUNT: Reset jumlah pesan belum terbaca di Database saat membuka obrolan
+    if (activeGroup.id) {
+       updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+          [`unreadCount.${user.uid}`]: 0
+       }).catch(e => console.log("Gagal reset unread:", e));
+    }
+
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
     const unsub = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      
-      if(activeGroup) {
-         setLocalReadStatus(prev => ({...prev, [activeGroup.id]: Date.now()}));
-         setUnreadCounts(prev => ({...prev, [activeGroup.id]: 0})); 
-      }
     });
+    
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
     return () => unsub();
   }, [activeGroup?.id, user]);
@@ -167,12 +163,6 @@ export default function App() {
     return () => window.removeEventListener('paste', handlePaste);
   }, [user, activeGroup, modalConfig]);
 
-  const showNotification = (title, body) => {
-    const id = Date.now();
-    setNotifications(prev => [...prev, { id, title, body }]);
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
-  };
-
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { console.error("Error login:", error); }
   };
@@ -181,9 +171,8 @@ export default function App() {
     if (!newGroupName.trim()) return;
     const newRoom = await addDoc(collection(db, 'chatRooms'), {
       name: newGroupName, type: 'group', avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`,
-      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: [] 
+      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: [], unreadCount: {}
     });
-    // Set activeGroup dengan properti display yang benar
     setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: newRoom.avatar, displayAvatar: newRoom.avatar, type: 'group' });
     setModalConfig({ type: null }); setNewGroupName(''); setIsMobileChatOpen(true);
   };
@@ -197,7 +186,8 @@ export default function App() {
         name: `Private`, type: 'private',
         createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
         participants: [user.uid, targetUser.uid], 
-        participantNames: [user.displayName, targetUser.name]
+        participantNames: [user.displayName, targetUser.name],
+        unreadCount: {}
       });
       setActiveGroup({ id: newRoom.id, name: 'Private', displayName: targetUser.name, avatar: targetUser.photo, displayAvatar: targetUser.photo, type: 'private' });
     }
@@ -236,9 +226,19 @@ export default function App() {
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
         text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false
       });
-      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
-        lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp()
+      
+      // Update Database Unread Count
+      const updateData = {
+         lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), 
+         lastSenderId: user.uid, 
+         lastMessageTime: serverTimestamp()
+      };
+      
+      (activeGroup.participants || []).forEach(pUid => {
+         if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
       });
+      
+      await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
     }
     setNewMessage('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -265,9 +265,13 @@ export default function App() {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
           text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false
         });
-        await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
-           lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp()
+        
+        const updateData = { lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+        (activeGroup.participants || []).forEach(pUid => {
+           if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
         });
+        await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
+        
         setPendingUploadFile(null); setPendingPreviewUrl(null); setUploadCaption('');
       } else { throw new Error(data.error?.message); }
     } catch (error) { alert(`GAGAL UPLOAD!\nPastikan nama Cloudinary dan Preset sudah benar.`); }
@@ -315,7 +319,6 @@ export default function App() {
     
     for (let target of forwardTargets) {
       let roomId = target.id;
-      // Jika target adalah User (Kontak yang belum ada room-nya)
       if (target.isContact) {
          const existingRoom = chatRooms.find(r => r.type === 'private' && r.participants.includes(user.uid) && r.participants.includes(target.uid));
          if (existingRoom) {
@@ -324,7 +327,7 @@ export default function App() {
             const newRoom = await addDoc(collection(db, 'chatRooms'), {
               name: `Private`, type: 'private',
               createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
-              participants: [user.uid, target.uid], participantNames: [user.displayName, target.name]
+              participants: [user.uid, target.uid], participantNames: [user.displayName, target.name], unreadCount: {}
             });
             roomId = newRoom.id;
          }
@@ -336,12 +339,17 @@ export default function App() {
           uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isForwarded: true, isPinned: false
         });
       }
-      await updateDoc(doc(db, 'chatRooms', roomId), {
-        lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp()
-      });
+      
+      const targetRoom = chatRooms.find(r => r.id === roomId);
+      const updateData = { lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+      if (targetRoom) {
+         (targetRoom.participants || []).forEach(pUid => {
+            if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
+         });
+      }
+      await updateDoc(doc(db, 'chatRooms', roomId), updateData);
     }
 
-    // Jika forward hanya ke 1 target, pindah ke room tersebut
     if (forwardTargets.length === 1) {
        let target = forwardTargets[0];
        let roomToOpen = chatRooms.find(r => r.id === target.id) || chatRooms.find(r => r.type === 'private' && r.participants.includes(target.uid));
@@ -352,7 +360,6 @@ export default function App() {
     }
     
     setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]); setForwardTargets([]);
-    showNotification("Sukses", `Pesan diteruskan.`);
   };
 
   const jumpToMessage = (msgId, room = null) => {
@@ -429,7 +436,6 @@ export default function App() {
     } catch (error) { alert("Gagal mengubah foto profil."); }
   };
 
-  // ================= UI RENDER =================
   if (!user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#0f172a]">
@@ -448,47 +454,33 @@ export default function App() {
   const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
   const pinnedMessages = messages.filter(m => m.isPinned);
 
-  // GABUNGKAN KONTAK DAN GRUP UNTUK MENU FORWARD
   const forwardContactList = contacts.map(c => ({ id: c.uid, uid: c.uid, name: c.name, photo: c.photo, isContact: true }));
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
-
 
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
 
-      {/* TOAST NOTIFICATIONS */}
-      <div className="fixed top-5 right-5 z-[1000] flex flex-col gap-2 pointer-events-none">
-        {notifications.map(notif => (
-          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.displayName === notif.title))}>
-             <div className="bg-[#3b82f6]/20 p-2 rounded-lg text-[#3b82f6]"><BellRing size={20}/></div>
-             <div><h4 className="font-bold text-sm text-[#f1f5f9]">{notif.title}</h4><p className="text-xs text-[#94a3b8] mt-1 truncate max-w-[200px]">{notif.body}</p></div>
-          </div>
-        ))}
-      </div>
-
-      {/* MODAL FORWARD INTERNAL */}
       {modalConfig.type === 'forward' && (
          <div className="fixed inset-0 z-[600] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
              <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
                <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2"><Share2 className="text-[#3b82f6]" size={18}/> Teruskan Ke...</h2>
                <button onClick={() => {setModalConfig({type:null}); setForwardTargets([]);}} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
              </div>
              
-             {/* OPSI FORWARD KE WHATSAPP */}
              <div className="p-4 border-b border-[#334155] bg-[#0f172a]">
                 <button onClick={() => handleForwardToWA(messages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
-                   <Smartphone size={16} /> Teruskan ke Luar (WhatsApp)
+                   <Smartphone size={16} /> Teruskan ke WhatsApp
                 </button>
              </div>
 
              <div className="p-3 bg-[#1e293b] flex-1 flex flex-col min-h-0">
-                <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Kontak Nexus:</p>
+                <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Internal:</p>
                 <div className="flex items-center bg-[#0f172a] rounded-xl px-3 py-1.5 border border-[#334155] mb-2">
                   <Search size={14} className="text-[#64748b]" />
-                  <input type="text" value={contactSearch} onChange={e => setContactSearch(e.target.value)} placeholder="Cari nama kontak..." className="bg-transparent border-none outline-none text-xs text-white w-full ml-2" />
+                  <input type="text" value={contactSearch} onChange={e => setContactSearch(e.target.value)} placeholder="Cari nama kontak / grup..." className="bg-transparent border-none outline-none text-xs text-white w-full ml-2" />
                 </div>
                 
                 <div className="overflow-y-auto flex-1 hide-scroll">
@@ -514,7 +506,6 @@ export default function App() {
          </div>
       )}
 
-      {/* PREVIEW GAMBAR & DOKUMEN MODAL */}
       {previewMedia && (
         <div className="fixed inset-0 z-[500] bg-[#020617]/95 flex flex-col items-center justify-center p-4 backdrop-blur-md">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-10">
@@ -534,10 +525,9 @@ export default function App() {
         </div>
       )}
 
-      {/* POP-UP BUAT GRUP / JAPRI */}
       {modalConfig.type && modalConfig.type !== 'forward' && (
         <div className="fixed inset-0 z-[400] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+          <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
             <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
               <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2">
                 {modalConfig.type === 'group' ? <Users className="text-[#3b82f6]" size={18}/> : <User className="text-[#10b981]" size={18}/>}
@@ -571,7 +561,6 @@ export default function App() {
         </div>
       )}
 
-      {/* LAYAR PRA-KIRIM FILE */}
       {pendingUploadFile && (
         <div className="fixed inset-0 z-[300] bg-[#020617]/95 flex flex-col backdrop-blur-sm">
            <div className="h-16 flex items-center px-4 shrink-0 border-b border-[#334155]">
@@ -588,13 +577,12 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. SIDEBAR KIRI */}
+      {/* SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#1e293b] bg-[#0f172a] flex-col h-full z-10 shrink-0 shadow-2xl relative`}>
         
-        {/* COMPACT FAB Tombol (+) */}
         <div className="absolute bottom-5 right-5 z-50">
           {showFabMenu && (
-             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-36 mb-2 origin-bottom-right animate-in fade-in zoom-in duration-200">
+             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-40 mb-2 origin-bottom-right animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'japri'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><User size={16} className="text-[#10b981]"/> New Chat</button>
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'group'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><Users size={16} className="text-[#3b82f6]"/> New Group</button>
              </div>
@@ -607,9 +595,7 @@ export default function App() {
         <div className="bg-[#0f172a] h-16 flex items-center justify-between px-4 shrink-0 border-b border-[#1e293b]">
           <div className="flex items-center gap-3 overflow-hidden">
             <img src={user.photoURL} alt="Profil" className="w-8 h-8 rounded-xl shadow-md border border-[#334155]" />
-            <div>
-              <div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div>
-            </div>
+            <div><div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div></div>
           </div>
           <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
         </div>
@@ -634,8 +620,7 @@ export default function App() {
              </div>
           ) : (
              filteredRooms.map(room => {
-                const unreadCount = unreadCounts[room.id] || 0;
-                
+                const unreadCount = room.unreadCount?.[user.uid] || 0; // Fix akurat counter unread
                 return (
                   <div key={room.id} className={`flex items-center p-3 mb-1 rounded-xl transition-all relative ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
                     <div className="flex-1 flex items-center min-w-0 cursor-pointer" onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }}>
@@ -647,16 +632,17 @@ export default function App() {
                         <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.displayName}</h3>
                         <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Mulai obrolan...'}</p>
                       </div>
-                      {unreadCount > 0 && <div className="w-5 h-5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount}</div>}
+                      {unreadCount > 0 && <div className="min-w-[20px] h-5 px-1.5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount > 99 ? '99+' : unreadCount}</div>}
                     </div>
 
                     <div className="relative shrink-0 ml-1">
                       <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition opacity-0 group-hover:opacity-100 lg:opacity-100">
                         <MoreVertical size={14} />
                       </button>
+                      {/* FIX TITIK TIGA DI LUAR ROOM */}
                       {showRoomOptions === room.id && (
-                        <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]">
-                           <button onClick={(e) => { e.stopPropagation(); handleDeleteRoom(room.id); }} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
+                        <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]" onClick={e => e.stopPropagation()}>
+                           <button onClick={() => handleDeleteRoom(room.id)} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
                         </div>
                       )}
                     </div>
@@ -691,17 +677,17 @@ export default function App() {
               </div>
               <div className="flex items-center gap-1 relative">
                 <button onClick={() => setShowChatSearch(!showChatSearch)} className={`p-2 rounded-xl transition-colors ${showChatSearch ? 'bg-[#3b82f6]/20 text-[#3b82f6]' : 'text-[#94a3b8] hover:bg-[#1e293b]'}`} title="Cari pesan"><Search size={18} /></button>
-                <button onClick={() => setShowRoomOptions(showRoomOptions === 'chat' ? null : 'chat')} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
+                <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === 'chat' ? null : 'chat'); }} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
                 
+                {/* FIX TITIK TIGA DI DALAM ROOM */}
                 {showRoomOptions === 'chat' && (
-                   <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]">
+                   <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]" onClick={e => e.stopPropagation()}>
                       <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Isi Chat</button>
                    </div>
                 )}
               </div>
             </div>
 
-            {/* Pinned Messages Header */}
             {pinnedMessages.length > 0 && (
               <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] cursor-pointer hover:bg-[#334155] transition" onClick={() => jumpToMessage(pinnedMessages[0].id)}>
                  <Star size={16} className="text-[#eab308]" />
