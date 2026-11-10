@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -31,6 +31,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 export default function App() {
+  // === SEMUA HOOKS/STATE WAJIB DI ATAS (Mencegah Error #310) ===
   const [user, setUser] = useState(null);
   const [contacts, setContacts] = useState([]);
   
@@ -53,10 +54,11 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  const [notifications, setNotifications] = useState([]);
-  
-  // FIX: Menggunakan useRef agar notifikasi toast tidak spam tanpa menggunakan state lokal yang merusak badge
-  const lastNotifiedRef = useRef({});
+  const [localReadStatus, setLocalReadStatus] = useState(() => {
+    const saved = localStorage.getItem('nexusReadStatus');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [unreadCounts, setUnreadCounts] = useState({}); 
   
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
@@ -69,6 +71,9 @@ export default function App() {
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [uploadCaption, setUploadCaption] = useState('');
   
+  // State untuk perputaran Pin Message Progresif
+  const [currentPinIndex, setCurrentPinIndex] = useState(0);
+
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const groupPhotoInputRef = useRef(null);
@@ -97,13 +102,14 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
-  // LISTEN DAFTAR CHAT & HITUNG UNREAD LANGSUNG DARI DATABASE
   useEffect(() => {
     if (!user) return;
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
     const unsub = onSnapshot(qRooms, (snapshot) => {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
       const processedRooms = [];
+      let newUnreadCounts = { ...unreadCounts };
       
       rooms.forEach(room => {
         const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
@@ -122,39 +128,46 @@ export default function App() {
               room.displayName = room.name;
            }
            
-           // BACA ANGKA UNREAD MURNI DARI FIREBASE
-           room.badgeCount = room.unreadCount?.[user.uid] || 0;
+           const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
+           const readTime = localReadStatus[room.id] || 0;
            
-           // TRIGGER NOTIFIKASI TOAST (Hanya jika belum dibuka & pesannya baru)
-           const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
-           if (room.badgeCount > 0 && activeGroup?.id !== room.id && msgTimeStr && msgTimeStr !== lastNotifiedRef.current[room.id]) {
-              showNotification(room.displayName, room.lastMessage);
-              lastNotifiedRef.current[room.id] = msgTimeStr; // Tandai agar tidak spam
+           if (roomTime > readTime && room.lastSenderId !== user.uid) {
+              if (activeGroup?.id !== room.id) {
+                newUnreadCounts[room.id] = room.unreadCount?.[user.uid] || 1;
+              }
+           } else {
+              newUnreadCounts[room.id] = 0;
            }
-
            processedRooms.push(room);
         }
       });
       
+      setUnreadCounts(newUnreadCounts);
       setChatRooms(processedRooms);
     });
     return () => unsub();
-  }, [user, contacts, activeGroup]);
+  }, [user, contacts, localReadStatus]);
 
-  // RESET UNREAD OTOMATIS SAAT DI DALAM ROOM
   useEffect(() => {
     if (!user || !activeGroup) return;
+    
+    // Reset index pin saat pindah chat room
+    setCurrentPinIndex(0);
 
-    // Reset langsung saat room diklik pertama kali
-    updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
+    if (activeGroup.id) {
+       const now = Date.now();
+       setLocalReadStatus(prev => {
+          const newStatus = {...prev, [activeGroup.id]: now};
+          localStorage.setItem('nexusReadStatus', JSON.stringify(newStatus));
+          return newStatus;
+       });
+       updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
+    }
 
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
     const unsub = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      
-      // AUTO-READ: Setiap ada pesan mengalir masuk & Anda sedang melihat room ini, otomatis kirim sinyal 'Sudah Dibaca' ke database
-      updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
     });
     
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
@@ -176,12 +189,6 @@ export default function App() {
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, [user, activeGroup, modalConfig]);
-
-  const showNotification = (title, body) => {
-    const id = Date.now();
-    setNotifications(prev => [...prev, { id, title, body }]);
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
-  };
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { console.error("Error login:", error); }
@@ -248,8 +255,6 @@ export default function App() {
       });
       
       const updateData = { lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-      
-      // Tambahkan angka +1 ke seluruh database peserta kecuali pengirim
       (activeGroup.participants || []).forEach(pUid => {
          if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
       });
@@ -448,13 +453,21 @@ export default function App() {
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.email.toLowerCase().includes(contactSearch.toLowerCase()));
   const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
   
+  // LOGIKA PIN MESSAGE PROGRESIF
   const pinnedMessages = messages.filter(m => m.isPinned).sort((a, b) => {
       const timeA = a.pinnedAt?.toMillis() || a.timestamp?.toMillis() || 0;
       const timeB = b.pinnedAt?.toMillis() || b.timestamp?.toMillis() || 0;
       return timeB - timeA; 
   });
-  const [currentPinIndex, setCurrentPinIndex] = useState(0);
-  useEffect(() => { setCurrentPinIndex(0); }, [activeGroup]); 
+
+  const handlePinClick = () => {
+    if (pinnedMessages.length === 0) return;
+    const msgToJump = pinnedMessages[currentPinIndex];
+    jumpToMessage(msgToJump.id);
+    
+    // Geser index untuk klik berikutnya (looping)
+    setCurrentPinIndex(prev => (prev + 1) % pinnedMessages.length);
+  };
 
   const forwardContactList = contacts.map(c => ({ id: c.uid, uid: c.uid, name: c.name, photo: c.photo, isContact: true }));
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
@@ -463,16 +476,6 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
-
-      {/* TOAST NOTIFICATIONS */}
-      <div className="fixed top-5 right-5 z-[1000] flex flex-col gap-2 pointer-events-none">
-        {notifications.map(notif => (
-          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.displayName === notif.title))}>
-             <div className="bg-[#3b82f6]/20 p-2 rounded-lg text-[#3b82f6]"><BellRing size={20}/></div>
-             <div><h4 className="font-bold text-sm text-[#f1f5f9]">{notif.title}</h4><p className="text-xs text-[#94a3b8] mt-1 truncate max-w-[200px]">{notif.body}</p></div>
-          </div>
-        ))}
-      </div>
 
       {/* MODAL FORWARD INTERNAL */}
       {modalConfig.type === 'forward' && (
@@ -704,20 +707,16 @@ export default function App() {
               </div>
             </div>
 
+            {/* PINNED MESSAGES HEADER PROGRESIF */}
             {pinnedMessages.length > 0 && (
-              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] shadow-sm">
-                 <div className="cursor-pointer flex-1 flex items-center gap-3 min-w-0" onClick={() => jumpToMessage(pinnedMessages[currentPinIndex].id)}>
-                    <Star size={16} className="text-[#eab308] shrink-0" />
-                    <div className="flex-1 min-w-0">
-                       <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan {pinnedMessages.length > 1 ? `(${currentPinIndex + 1}/${pinnedMessages.length})` : ''}</p>
-                       <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[currentPinIndex].text || pinnedMessages[currentPinIndex].fileName}</p>
-                    </div>
+              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] shadow-sm cursor-pointer hover:bg-[#334155] transition" onClick={handlePinClick}>
+                 <Star size={16} className="text-[#eab308] shrink-0" />
+                 <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan {pinnedMessages.length > 1 ? `(${currentPinIndex + 1}/${pinnedMessages.length})` : ''}</p>
+                    <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[currentPinIndex].text || pinnedMessages[currentPinIndex].fileName}</p>
                  </div>
                  {pinnedMessages.length > 1 && (
-                    <div className="flex items-center gap-1 shrink-0 bg-[#0f172a] rounded-lg border border-[#334155]">
-                      <button onClick={(e) => { e.stopPropagation(); setCurrentPinIndex(prev => prev === pinnedMessages.length - 1 ? 0 : prev + 1); }} className="p-1 hover:bg-[#334155] rounded-l-lg text-[#94a3b8]"><ChevronLeft size={16}/></button>
-                      <button onClick={(e) => { e.stopPropagation(); setCurrentPinIndex(prev => prev === 0 ? pinnedMessages.length - 1 : prev - 1); }} className="p-1 hover:bg-[#334155] rounded-r-lg text-[#94a3b8]"><ChevronRight size={16}/></button>
-                    </div>
+                    <div className="text-[10px] text-[#64748b] whitespace-nowrap bg-[#0f172a] px-2 py-1 rounded-lg">Klik untuk melihat semua</div>
                  )}
               </div>
             )}
@@ -745,14 +744,13 @@ export default function App() {
                 const isMenuOpen = openMenuId === msg.id;
                 const isSelected = selectedMessages.includes(msg.id);
                 
+                // CSS BUBBLE LOGIC: Whatsapp style (Tails on the first message)
                 const prevMsg = index > 0 ? filteredMessages[index - 1] : null;
-                const nextMsg = index < filteredMessages.length - 1 ? filteredMessages[index + 1] : null;
                 const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
-                const isSameSenderAsNext = nextMsg && nextMsg.uid === msg.uid;
                 
                 let bubbleShape = 'rounded-2xl'; 
-                if (!isSameSenderAsNext) { 
-                   bubbleShape = isMe ? 'rounded-2xl rounded-br-sm' : 'rounded-2xl rounded-bl-sm';
+                if (!isSameSenderAsPrev) { 
+                   bubbleShape = isMe ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl rounded-tl-sm';
                 }
                 const marginTop = isSameSenderAsPrev ? 'mt-1' : 'mt-4'; 
 
