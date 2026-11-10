@@ -3,9 +3,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, MoreVertical, Search, CheckCheck, FileText, Image as ImageIcon } from 'lucide-react';
+import { Send, LogOut, Paperclip, MoreVertical, Search, CheckCheck, FileText, ArrowLeft } from 'lucide-react';
 
-// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI (Ganti dengan kode Anda sendiri)
+// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
 const firebaseConfig = {
   apiKey: "AIzaSyDL0S4x9EXO5GCXORMHAzwdSRnFAKqcSpc",
   authDomain: "wac-test-mode.firebaseapp.com",
@@ -16,7 +16,6 @@ const firebaseConfig = {
   measurementId: "G-9V5ZEQHC98"
 };
 
-// Inisialisasi Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -33,13 +32,14 @@ export default function App() {
   const [newMessage, setNewMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   
+  // State baru untuk mengontrol tampilan di HP
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
+  
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => setUser(currentUser));
     return () => unsubscribe();
   }, []);
 
@@ -54,10 +54,28 @@ export default function App() {
     return () => unsubscribe();
   }, [activeGroup.id, user]);
 
+  // --- FITUR PASTE GAMBAR ---
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (!user) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) handleFileProcessing(file);
+        }
+      }
+    };
+    
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [activeGroup, user]);
+
   const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      await signInWithPopup(auth, new GoogleAuthProvider());
     } catch (error) {
       console.error("Error login:", error);
     }
@@ -77,30 +95,23 @@ export default function App() {
     setNewMessage('');
   };
 
-  // --- FUNGSI BARU: UPLOAD FILE & GAMBAR ---
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // Batasi ukuran file 500KB
-    if (file.size > 500000) {
-      alert("Maaf, ukuran file maksimal adalah 500KB.");
-      e.target.value = '';
+  const handleFileProcessing = async (file) => {
+    // Sementara batas dinaikkan ke 800KB (Maksimal database teks adalah 1MB)
+    if (file.size > 800000) {
+      alert("Untuk sementara, batas maksimal file adalah 800KB hingga kita menyambungkan server penyimpanan utama.");
       return;
     }
 
     setIsUploading(true);
     const isImage = file.type.startsWith('image/');
-    
     const reader = new FileReader();
+    
     reader.onloadend = async () => {
-      const base64String = reader.result;
-      
       try {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
           text: '', 
-          fileData: base64String,
-          fileName: file.name,
+          fileData: reader.result,
+          fileName: file.name || 'Pasted_Image.png',
           isImage: isImage,
           uid: user.uid,
           senderName: user.displayName,
@@ -112,24 +123,20 @@ export default function App() {
         alert("Gagal mengirim file.");
       }
       setIsUploading(false);
-      e.target.value = ''; // Reset input
     };
     reader.readAsDataURL(file);
   };
 
   const handleForwardToWA = (msg) => {
     let waText = msg.text || '';
-    if (msg.fileName) {
-      waText = `*[File: ${msg.fileName}]* ${waText}`;
-    }
-    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
-    window.open(waUrl, '_blank');
+    if (msg.fileName) waText = `*[File: ${msg.fileName}]* ${waText}`;
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`, '_blank');
   };
 
   if (!user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#f0f2f5]">
-        <div className="bg-white p-10 rounded-lg shadow-lg text-center max-w-sm w-full">
+        <div className="bg-white p-10 rounded-lg shadow-lg text-center max-w-sm w-full mx-4">
           <h1 className="text-3xl font-bold text-[#00a884] mb-2">Web Chat</h1>
           <p className="mb-8 text-gray-500">Silakan login untuk masuk ke grup.</p>
           <button onClick={handleLogin} className="w-full bg-[#00a884] text-white py-3 rounded hover:bg-[#008f6f] transition font-semibold">
@@ -141,22 +148,23 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-[#f0f2f5] font-sans">
-      {/* Sidebar Grup */}
-      <div className="w-1/3 border-r border-gray-300 bg-white flex flex-col">
-        <div className="bg-[#f0f2f5] h-16 flex items-center justify-between px-4 py-2 border-b">
-          <div className="flex items-center gap-3">
-            <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full" />
+    <div className="flex h-screen bg-[#f0f2f5] font-sans overflow-hidden">
+      
+      {/* SIDEBAR GRUP (Disembunyikan di HP saat Chat Terbuka) */}
+      <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-1/3 border-r border-gray-300 bg-white flex-col h-full`}>
+        <div className="bg-[#f0f2f5] h-16 flex items-center justify-between px-4 py-2 border-b shrink-0">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full shrink-0" />
             <span className="font-semibold text-gray-700 truncate">{user.displayName}</span>
           </div>
-          <button onClick={() => signOut(auth)} className="text-gray-500 hover:text-red-500">
+          <button onClick={() => signOut(auth)} className="text-gray-500 hover:text-red-500 ml-2 shrink-0">
             <LogOut size={20} />
           </button>
         </div>
         
-        <div className="p-2 border-b bg-white">
+        <div className="p-2 border-b bg-white shrink-0">
           <div className="bg-[#f0f2f5] flex items-center rounded-lg px-3 py-1.5">
-            <Search size={18} className="text-gray-500" />
+            <Search size={18} className="text-gray-500 shrink-0" />
             <input type="text" placeholder="Cari grup..." className="bg-transparent border-none outline-none ml-3 w-full text-sm" />
           </div>
         </div>
@@ -165,39 +173,50 @@ export default function App() {
           {GROUPS.map(group => (
             <div 
               key={group.id} 
-              onClick={() => setActiveGroup(group)}
+              onClick={() => {
+                setActiveGroup(group);
+                setIsMobileChatOpen(true); // Buka layar chat di HP
+              }}
               className={`flex items-center px-4 py-3 cursor-pointer hover:bg-[#f5f6f6] ${activeGroup.id === group.id ? 'bg-[#f0f2f5]' : ''}`}
             >
-              <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full mr-3" />
-              <div className="flex-1 border-b border-gray-100 pb-3">
-                <h3 className="font-medium text-gray-800">{group.name}</h3>
+              <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full mr-3 shrink-0" />
+              <div className="flex-1 border-b border-gray-100 pb-3 truncate">
+                <h3 className="font-medium text-gray-800 truncate">{group.name}</h3>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Area Chat */}
-      <div className="flex-1 flex flex-col bg-[#efeae2]" style={{ backgroundImage: "url('https://web.whatsapp.com/img/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')", opacity: 0.9 }}>
-        <div className="bg-[#f0f2f5] h-16 flex items-center px-4 border-b">
-          <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-3" />
-          <h2 className="font-medium text-gray-800">{activeGroup.name}</h2>
+      {/* AREA CHAT (Disembunyikan di HP saat Daftar Grup Terbuka) */}
+      <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#efeae2]`} style={{ backgroundImage: "url('https://web.whatsapp.com/img/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')", opacity: 0.9 }}>
+        
+        {/* Header Chat */}
+        <div className="bg-[#f0f2f5] h-16 flex items-center px-4 border-b shrink-0">
+          <button 
+            onClick={() => setIsMobileChatOpen(false)} 
+            className="md:hidden mr-3 text-gray-600 hover:text-gray-800 p-1"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-3 shrink-0" />
+          <h2 className="font-medium text-gray-800 truncate">{activeGroup.name}</h2>
         </div>
 
+        {/* Area Pesan */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
           {messages.map((msg) => {
             const isMe = msg.uid === user.uid;
             return (
-              <div key={msg.id} className={`flex flex-col relative group max-w-[65%] ${isMe ? 'self-end' : 'self-start'}`}>
+              <div key={msg.id} className={`flex flex-col relative group max-w-[85%] md:max-w-[65%] ${isMe ? 'self-end' : 'self-start'}`}>
                 {!isMe && <span className="text-xs text-gray-500 ml-1 mb-1">{msg.senderName}</span>}
-                <div className={`p-2 px-3 rounded-lg shadow-sm text-sm relative ${isMe ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
+                <div className={`p-2 px-3 rounded-lg shadow-sm text-sm relative break-words ${isMe ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
                   
-                  {/* Tampilan Gambar/Dokumen */}
-                  {msg.isImage && <img src={msg.fileData} alt="attachment" className="max-w-[200px] rounded mb-1" />}
+                  {msg.isImage && <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[250px] rounded mb-1" />}
                   {!msg.isImage && msg.fileData && (
-                    <a href={msg.fileData} download={msg.fileName} className="flex items-center gap-2 bg-black/5 p-2 rounded mb-1 text-gray-800 hover:bg-black/10">
-                      <FileText size={18} className="text-[#00a884]" />
-                      <span className="font-medium truncate max-w-[150px]">{msg.fileName}</span>
+                    <a href={msg.fileData} download={msg.fileName} className="flex items-center gap-2 bg-black/5 p-2 rounded mb-1 text-gray-800 hover:bg-black/10 w-full overflow-hidden">
+                      <FileText size={18} className="text-[#00a884] shrink-0" />
+                      <span className="font-medium truncate flex-1">{msg.fileName}</span>
                     </a>
                   )}
                   
@@ -209,7 +228,7 @@ export default function App() {
                   
                   <button 
                     onClick={() => handleForwardToWA(msg)}
-                    className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 bg-white rounded-full shadow hover:bg-gray-100 transition"
+                    className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 md:flex hidden p-1 bg-white rounded-full shadow hover:bg-gray-100 transition"
                     title="Teruskan ke WhatsApp"
                   >
                     <MoreVertical size={16} className="text-gray-500" />
@@ -221,14 +240,12 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Form & Tombol Lampiran */}
-        <form onSubmit={handleSendMessage} className="bg-[#f0f2f5] p-3 flex items-center gap-3">
-          
+        {/* Input Pesan */}
+        <form onSubmit={handleSendMessage} className="bg-[#f0f2f5] p-2 md:p-3 flex items-center gap-2 shrink-0">
           <input 
             type="file" 
             ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            accept="image/*,.pdf,.doc,.docx,.txt"
+            onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} 
             className="hidden" 
           />
           
@@ -236,7 +253,7 @@ export default function App() {
             type="button" 
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className={`text-gray-500 hover:text-gray-700 p-2 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`text-gray-500 hover:text-gray-700 p-2 shrink-0 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {isUploading ? <div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={24} />}
           </button>
@@ -245,10 +262,10 @@ export default function App() {
             type="text" 
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Ketik pesan" 
-            className="flex-1 py-2 px-4 rounded-lg bg-white border-none outline-none focus:ring-1 focus:ring-gray-300"
+            placeholder="Ketik pesan..." 
+            className="flex-1 py-2 px-3 md:px-4 rounded-lg bg-white border-none outline-none focus:ring-1 focus:ring-gray-300 min-w-0"
           />
-          <button type="submit" disabled={!newMessage.trim()} className="text-gray-500 hover:text-gray-700 p-2">
+          <button type="submit" disabled={!newMessage.trim()} className="text-gray-500 hover:text-gray-700 p-2 shrink-0">
             <Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} />
           </button>
         </form>
