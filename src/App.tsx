@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, BellRing } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, BellRing, Smartphone } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI BAWAH INI
@@ -33,37 +33,32 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [contacts, setContacts] = useState([]);
   
-  // STATE CHAT & ROOMS
   const [chatRooms, setChatRooms] = useState([]);
   const [activeGroup, setActiveGroup] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
-  // STATE PENCARIAN (SEARCH)
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState(null);
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
   
-  // STATE UI & INTERAKSI
   const [isUploading, setIsUploading] = useState(false);
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false); 
   const [openMenuId, setOpenMenuId] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [showFabMenu, setShowFabMenu] = useState(false);
-  const [showRoomOptions, setShowRoomOptions] = useState(false);
+  const [showRoomOptions, setShowRoomOptions] = useState(null); // Menyimpan ID room yang opsinya dibuka
   
-  // NOTIFIKASI
   const [notifications, setNotifications] = useState([]);
   const [localReadStatus, setLocalReadStatus] = useState({});
+  const [unreadCounts, setUnreadCounts] = useState({}); // State khusus untuk lencana jumlah pesan
   
-  // STATE MODAL CUSTOM
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
   
-  // STATE FILE & SELECTION
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
@@ -104,18 +99,24 @@ export default function App() {
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
     const unsub = onSnapshot(qRooms, (snapshot) => {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const filtered = rooms.filter(r => r.type === 'group' || (r.type === 'private' && r.participants?.includes(user.email)));
+      const filtered = rooms.filter(r => r.type === 'group' || (r.type === 'private' && r.participants?.includes(user.uid)));
+      
+      let newUnreadCounts = { ...unreadCounts };
       
       filtered.forEach(room => {
-        if (room.lastMessageTime && room.lastSenderId !== user.uid) {
-          const roomTime = room.lastMessageTime.toMillis ? room.lastMessageTime.toMillis() : Date.now();
-          const readTime = localReadStatus[room.id] || 0;
-          if (roomTime > readTime && activeGroup?.id !== room.id) {
+        const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
+        const readTime = localReadStatus[room.id] || 0;
+        
+        if (roomTime > readTime && room.lastSenderId !== user.uid) {
+           if (activeGroup?.id !== room.id) {
              showNotification(room.name, room.lastMessage);
-             setLocalReadStatus(prev => ({...prev, [room.id]: roomTime})); 
-          }
+             // Menambah counter jika ada pesan baru yang masuk
+             newUnreadCounts[room.id] = (newUnreadCounts[room.id] || 0) + 1; 
+           }
         }
       });
+      
+      setUnreadCounts(newUnreadCounts);
       setChatRooms(filtered);
     });
     return () => unsub();
@@ -127,7 +128,11 @@ export default function App() {
     const unsub = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      if(activeGroup) setLocalReadStatus(prev => ({...prev, [activeGroup.id]: Date.now()}));
+      
+      if(activeGroup) {
+         setLocalReadStatus(prev => ({...prev, [activeGroup.id]: Date.now()}));
+         setUnreadCounts(prev => ({...prev, [activeGroup.id]: 0})); // Reset counter saat ruangan dibuka
+      }
     });
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
     return () => unsub();
@@ -170,83 +175,66 @@ export default function App() {
   };
 
   const submitNewJapri = async (targetUser) => {
-    const existingRoom = chatRooms.find(r => r.type === 'private' && r.participants.includes(targetUser.email));
-    if (existingRoom) { setActiveGroup(existingRoom); } 
-    else {
+    // FIX BUG DUPLIKASI JAPRI: Cocokkan ID peserta secara independen urutannya
+    const existingRoom = chatRooms.find(r => 
+      r.type === 'private' && 
+      r.participants.includes(user.uid) && 
+      r.participants.includes(targetUser.uid)
+    );
+
+    if (existingRoom) { 
+       setActiveGroup(existingRoom); 
+    } else {
       const newRoom = await addDoc(collection(db, 'chatRooms'), {
         name: `Chat: ${targetUser.name}`, type: 'private', avatar: targetUser.photo,
-        createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: [user.email, targetUser.email] 
+        createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
+        participants: [user.uid, targetUser.uid], // Menggunakan UID, bukan Email
+        participantNames: [user.displayName, targetUser.name]
       });
-      setActiveGroup({ id: newRoom.id, name: targetUser.name, type: 'private' });
+      setActiveGroup({ id: newRoom.id, name: targetUser.name, type: 'private', avatar: targetUser.photo });
     }
     setModalConfig({ type: null }); setIsMobileChatOpen(true);
   };
 
-  const handleEditGroupName = async () => {
-    if (!isAdmin && activeGroup.createdBy !== user.uid) return alert("Hanya pembuat grup atau Admin yang bisa mengubah nama.");
-    const newName = window.prompt("Ubah nama grup/chat:", activeGroup.name);
-    if (newName && newName.trim()) {
-      await updateDoc(doc(db, 'chatRooms', activeGroup.id), { name: newName });
-      setActiveGroup({...activeGroup, name: newName});
-    }
-  };
-
-  const handleUpdateGroupPhoto = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!isAdmin && activeGroup.createdBy !== user.uid) return alert("Hanya Admin/Pembuat yang bisa mengubah foto.");
-    const formData = new FormData();
-    formData.append('file', file); formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-    try {
-      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method: 'POST', body: formData });
-      const data = await response.json();
-      if (data.secure_url) {
-        await updateDoc(doc(db, 'chatRooms', activeGroup.id), { avatar: data.secure_url });
-        setActiveGroup({...activeGroup, avatar: data.secure_url});
+  const handleDeleteRoom = async (roomId) => {
+    if (window.confirm("Hapus seluruh ruangan obrolan ini permanen?")) {
+      // Hapus dokumen di koleksi chatRooms
+      await deleteDoc(doc(db, 'chatRooms', roomId));
+      
+      // Jika ruangan yang sedang dibuka dihapus, kembali ke layar awal
+      if (activeGroup?.id === roomId) {
+        setActiveGroup(null);
+        setIsMobileChatOpen(false);
       }
-    } catch (error) { alert("Gagal mengubah foto profil."); }
-  };
-
-  // FUNGSI INTI YANG SEBELUMNYA HILANG
-  const handleInputResize = (e) => {
-    setNewMessage(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-  };
-
-  const handleKeyDown = (e) => {
-    const isMobile = window.innerWidth <= 768;
-    if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
-      e.preventDefault();
-      handleSendMessage(e);
+      setShowRoomOptions(null);
     }
   };
 
-  const startEditing = (msg) => {
-    setEditingMessage(msg); setNewMessage(msg.text); setOpenMenuId(null); 
-    setTimeout(() => textareaRef.current?.focus(), 100);
-  };
-
-  const toggleSelection = (msgId) => {
-    if (selectedMessages.includes(msgId)) {
-      const newSelection = selectedMessages.filter(id => id !== msgId);
-      setSelectedMessages(newSelection);
-      if (newSelection.length === 0) setIsSelectionMode(false);
-    } else { setSelectedMessages([...selectedMessages, msgId]); }
-  };
-
-  const handleDeleteMessage = async (msgId = null) => {
-    const isBulk = isSelectionMode && selectedMessages.length > 0;
-    const msgCount = isBulk ? selectedMessages.length : 1;
-    if (window.confirm(`Hapus ${msgCount} pesan secara permanen?`)) {
-      if (isBulk) {
-        for (const id of selectedMessages) await deleteDoc(doc(db, `messages_${activeGroup.id}`, id));
-        setIsSelectionMode(false); setSelectedMessages([]);
-      } else {
-        await deleteDoc(doc(db, `messages_${activeGroup.id}`, msgId));
-      }
-      setOpenMenuId(null);
+  const handleClearAllMessages = async () => {
+    if (window.confirm("Bersihkan isi percakapan? (Pesan akan terhapus secara permanen)")) {
+      messages.forEach(async (m) => { await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id)); });
+      setShowRoomOptions(null);
     }
+  };
+
+  const handleSendMessage = async (e) => {
+    e?.preventDefault();
+    if (!newMessage.trim() || !activeGroup) return;
+    
+    let msgText = newMessage;
+    if (editingMessage) {
+      await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), { text: msgText, isEdited: true });
+      setEditingMessage(null);
+    } else {
+      await addDoc(collection(db, `messages_${activeGroup.id}`), {
+        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false
+      });
+      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+        lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp()
+      });
+    }
+    setNewMessage('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
   const handleFileSelection = (e) => {
@@ -270,57 +258,43 @@ export default function App() {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
           text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp()
         });
+        await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+           lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp()
+        });
         setPendingUploadFile(null); setPendingPreviewUrl(null); setUploadCaption('');
       } else { throw new Error(data.error?.message); }
     } catch (error) { alert(`GAGAL UPLOAD!\nPastikan nama Cloudinary dan Preset sudah benar.`); }
     setIsUploading(false);
   };
 
-  const handleForceDownload = (url) => {
-    let downloadUrl = url;
-    if (url.includes('cloudinary.com') && !url.includes('fl_attachment')) {
-      downloadUrl = url.replace('/upload/', '/upload/fl_attachment/');
+  // FORWARD WHATSAPP LANGSUNG DENGAN FILE (WEB SHARE API)
+  const handleForwardToWA = async (msgArray) => {
+    if (msgArray.length === 1 && msgArray[0].fileData && navigator.canShare) {
+      try {
+        const msg = msgArray[0];
+        const response = await fetch(msg.fileData);
+        const blob = await response.blob();
+        
+        // Memaksa pengiriman file gambar/pdf langsung ke WhatsApp jika perangkat mendukung
+        const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ title: msg.fileName, text: msg.text || '', files: [file] });
+          setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
+          return; 
+        }
+      } catch (error) { console.log("Perangkat tidak mendukung Share API dengan file, kembali ke mode Link."); }
     }
-    window.open(downloadUrl, '_blank');
-  };
 
-  const handleForwardToWA = (msgArray) => {
+    // Jika gagal mengirim file langsung, atau pesannya banyak, fallback ke mode Link Teks biasa
     let finalWaText = msgArray.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
       if (m.fileName) return `${header}\n📁 [File]: ${m.fileData}\n${textSegment}`;
       return `${header}\n${textSegment}`;
     }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
+    
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(finalWaText)}`, '_blank');
     setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
-  };
-  // BATAS FUNGSI INTI YANG KEMBALI
-
-  const handleSendMessage = async (e) => {
-    e?.preventDefault();
-    if (!newMessage.trim() || !activeGroup) return;
-    
-    let msgText = newMessage;
-    if (editingMessage) {
-      await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), { text: msgText, isEdited: true });
-      setEditingMessage(null);
-    } else {
-      await addDoc(collection(db, `messages_${activeGroup.id}`), {
-        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false
-      });
-      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
-        lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp()
-      });
-    }
-    setNewMessage('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  };
-
-  const handleClearAllMessages = async () => {
-    if (window.confirm("PERINGATAN: Hapus SEMUA pesan di obrolan ini secara permanen untuk semua orang?")) {
-      messages.forEach(async (m) => { await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id)); });
-      setShowRoomOptions(false);
-    }
   };
 
   const executeInternalForward = async (targetRooms) => {
@@ -340,6 +314,22 @@ export default function App() {
     }
     setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]);
     showNotification("Sukses", `Pesan diteruskan ke ${targetRooms.length} obrolan.`);
+  };
+
+  const jumpToMessage = (msgId, room = null) => {
+    if(room && (!activeGroup || activeGroup.id !== room.id)) {
+       setActiveGroup(room); setIsMobileChatOpen(true);
+    }
+    setShowGroupInfo(false); setGlobalSearchResults(null); setSidebarSearch('');
+    
+    setTimeout(() => {
+      const el = document.getElementById(`msg-${msgId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('bg-[#3b82f6]/40', 'transition-colors', 'duration-[2000ms]');
+        setTimeout(() => el.classList.remove('bg-[#3b82f6]/40'), 3000);
+      }
+    }, 600);
   };
 
   const handleGlobalSearch = async (e) => {
@@ -362,28 +352,53 @@ export default function App() {
     }
   };
 
-  const jumpToMessage = (msgId, room = null) => {
-    if(room && (!activeGroup || activeGroup.id !== room.id)) {
-       setActiveGroup(room);
-       setIsMobileChatOpen(true);
-    }
-    setShowGroupInfo(false);
-    setGlobalSearchResults(null);
-    
-    setTimeout(() => {
-      const el = document.getElementById(`msg-${msgId}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('bg-[#3b82f6]/30', 'transition-colors', 'duration-1000');
-        setTimeout(() => el.classList.remove('bg-[#3b82f6]/30'), 2500);
-      }
-    }, 500);
-  };
-
   const formatText = (text) => {
     if (!text) return { __html: '' };
     let formatted = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*(.*?)\*/g, "<strong>$1</strong>").replace(/_(.*?)_/g, "<em>$1</em>").replace(/\n/g, "<br />");
     return { __html: formatted };
+  };
+  
+  const handleInputResize = (e) => { setNewMessage(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`; };
+  const handleKeyDown = (e) => { const isMobile = window.innerWidth <= 768; if (e.key === 'Enter' && !e.shiftKey && !isMobile) { e.preventDefault(); handleSendMessage(e); } };
+  const startEditing = (msg) => { setEditingMessage(msg); setNewMessage(msg.text); setOpenMenuId(null); setTimeout(() => textareaRef.current?.focus(), 100); };
+  const toggleSelection = (msgId) => {
+    if (selectedMessages.includes(msgId)) {
+      const newSelection = selectedMessages.filter(id => id !== msgId);
+      setSelectedMessages(newSelection);
+      if (newSelection.length === 0) setIsSelectionMode(false);
+    } else { setSelectedMessages([...selectedMessages, msgId]); }
+  };
+  const handleDeleteMessage = async (msgId = null) => {
+    const isBulk = isSelectionMode && selectedMessages.length > 0;
+    const msgCount = isBulk ? selectedMessages.length : 1;
+    if (window.confirm(`Hapus ${msgCount} pesan secara permanen?`)) {
+      if (isBulk) {
+        for (const id of selectedMessages) await deleteDoc(doc(db, `messages_${activeGroup.id}`, id));
+        setIsSelectionMode(false); setSelectedMessages([]);
+      } else { await deleteDoc(doc(db, `messages_${activeGroup.id}`, msgId)); }
+      setOpenMenuId(null);
+    }
+  };
+  const handleForceDownload = (url) => {
+    let downloadUrl = url;
+    if (url.includes('cloudinary.com') && !url.includes('fl_attachment')) { downloadUrl = url.replace('/upload/', '/upload/fl_attachment/'); }
+    window.open(downloadUrl, '_blank');
+  };
+  const handleEditGroupName = async () => {
+    if (!isAdmin && activeGroup.createdBy !== user.uid) return alert("Hanya pembuat atau Admin yang bisa mengubah nama.");
+    const newName = window.prompt("Ubah nama grup:", activeGroup.name);
+    if (newName && newName.trim()) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { name: newName }); setActiveGroup({...activeGroup, name: newName}); }
+  };
+  const handleUpdateGroupPhoto = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!isAdmin && activeGroup.createdBy !== user.uid) return alert("Hanya Admin/Pembuat yang bisa mengubah foto.");
+    const formData = new FormData(); formData.append('file', file); formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    try {
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method: 'POST', body: formData });
+      const data = await response.json();
+      if (data.secure_url) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { avatar: data.secure_url }); setActiveGroup({...activeGroup, avatar: data.secure_url}); }
+    } catch (error) { alert("Gagal mengubah foto profil."); }
   };
 
   // ================= UI RENDER =================
@@ -405,13 +420,13 @@ export default function App() {
   const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
 
   return (
-    <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(false);}}>
+    <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
 
       {/* TOAST NOTIFICATIONS */}
       <div className="fixed top-5 right-5 z-[1000] flex flex-col gap-2 pointer-events-none">
         {notifications.map(notif => (
-          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto">
+          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.name === notif.title))}>
              <div className="bg-[#3b82f6]/20 p-2 rounded-lg text-[#3b82f6]"><BellRing size={20}/></div>
              <div><h4 className="font-bold text-sm text-[#f1f5f9]">{notif.title}</h4><p className="text-xs text-[#94a3b8] mt-1 truncate max-w-[200px]">{notif.body}</p></div>
           </div>
@@ -423,16 +438,27 @@ export default function App() {
          <div className="fixed inset-0 z-[600] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
            <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
              <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
-               <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2"><Share2 className="text-[#3b82f6]" size={18}/> Teruskan Pesan Ke...</h2>
+               <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2"><Share2 className="text-[#3b82f6]" size={18}/> Teruskan Ke...</h2>
                <button onClick={() => setModalConfig({type:null})} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
              </div>
-             <div className="flex-1 overflow-y-auto hide-scroll p-2">
-               {chatRooms.map(room => (
-                 <div key={room.id} onClick={() => executeInternalForward([room])} className="flex items-center gap-3 p-3 hover:bg-[#334155] rounded-xl cursor-pointer transition">
-                   <img src={room.avatar} alt={room.name} className="w-10 h-10 rounded-full" />
-                   <p className="font-medium text-[#f1f5f9] text-sm truncate flex-1">{room.name}</p>
-                 </div>
-               ))}
+             
+             {/* OPSI FORWARD KE WHATSAPP DISINI */}
+             <div className="p-4 border-b border-[#334155] bg-[#0f172a]">
+                <button onClick={() => handleForwardToWA(messages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
+                   <Smartphone size={16} /> Teruskan ke Luar (WhatsApp)
+                </button>
+             </div>
+
+             <div className="p-3 bg-[#1e293b]">
+                <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Kontak Nexus:</p>
+                <div className="overflow-y-auto max-h-[40vh] hide-scroll">
+                   {chatRooms.map(room => (
+                     <div key={room.id} onClick={() => executeInternalForward([room])} className="flex items-center gap-3 p-3 hover:bg-[#334155] rounded-xl cursor-pointer transition">
+                       <img src={room.avatar} alt={room.name} className="w-10 h-10 rounded-full" />
+                       <p className="font-medium text-[#f1f5f9] text-sm truncate flex-1">{room.name}</p>
+                     </div>
+                   ))}
+                </div>
              </div>
            </div>
          </div>
@@ -458,7 +484,7 @@ export default function App() {
         </div>
       )}
 
-      {/* POP-UP CUSTOM UNTUK BUAT GRUP / JAPRI */}
+      {/* POP-UP BUAT GRUP / JAPRI */}
       {modalConfig.type && modalConfig.type !== 'forward' && (
         <div className="fixed inset-0 z-[400] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
@@ -512,7 +538,7 @@ export default function App() {
         </div>
       )}
 
-      {/* SIDEBAR KIRI */}
+      {/* 3. SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#1e293b] bg-[#0f172a] flex-col h-full z-10 shrink-0 shadow-2xl relative`}>
         
         {/* COMPACT FAB Tombol (+) */}
@@ -558,20 +584,34 @@ export default function App() {
              </div>
           ) : (
              filteredRooms.map(room => {
-                const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
-                const isUnread = roomTime > (localReadStatus[room.id] || 0) && room.lastSenderId !== user.uid;
+                const unreadCount = unreadCounts[room.id] || 0;
                 
                 return (
-                  <div key={room.id} onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }} className={`flex items-center p-3 mb-1 cursor-pointer rounded-xl transition-all ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
-                    <div className="relative">
-                      <img src={room.avatar} alt={room.name} className={`w-10 h-10 object-cover mr-3 ${room.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
-                      {room.type === 'private' && <div className="absolute -bottom-0.5 -right-0.5 bg-[#10b981] w-3 h-3 rounded-full border-2 border-[#0f172a]"></div>}
+                  <div key={room.id} className={`flex items-center p-3 mb-1 rounded-xl transition-all relative ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
+                    <div className="flex-1 flex items-center min-w-0 cursor-pointer" onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }}>
+                      <div className="relative">
+                        <img src={room.avatar} alt={room.name} className={`w-10 h-10 object-cover mr-3 ${room.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
+                        {room.type === 'private' && <div className="absolute -bottom-0.5 -right-0.5 bg-[#10b981] w-3 h-3 rounded-full border-2 border-[#0f172a]"></div>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.name}</h3>
+                        <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Mulai obrolan...'}</p>
+                      </div>
+                      {/* BADGE UNREAD COUNT */}
+                      {unreadCount > 0 && <div className="w-5 h-5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount}</div>}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className={`truncate text-[13px] ${isUnread ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.name}</h3>
-                      <p className={`text-[11px] truncate ${isUnread ? 'text-[#f1f5f9] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Mulai obrolan...'}</p>
+
+                    {/* MENU OPSI RUANGAN (DELETE ROOM) */}
+                    <div className="relative shrink-0 ml-1">
+                      <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition opacity-0 group-hover:opacity-100 lg:opacity-100">
+                        <MoreVertical size={14} />
+                      </button>
+                      {showRoomOptions === room.id && (
+                        <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]">
+                           <button onClick={(e) => { e.stopPropagation(); handleDeleteRoom(room.id); }} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
+                        </div>
+                      )}
                     </div>
-                    {isUnread && <div className="w-2.5 h-2.5 bg-[#10b981] rounded-full shadow-lg ml-2 shrink-0"></div>}
                   </div>
                 )
              })
@@ -603,11 +643,11 @@ export default function App() {
               </div>
               <div className="flex items-center gap-1 relative">
                 <button onClick={() => setShowChatSearch(!showChatSearch)} className={`p-2 rounded-xl transition-colors ${showChatSearch ? 'bg-[#3b82f6]/20 text-[#3b82f6]' : 'text-[#94a3b8] hover:bg-[#1e293b]'}`} title="Cari pesan"><Search size={18} /></button>
-                <button onClick={() => setShowRoomOptions(!showRoomOptions)} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
+                <button onClick={() => setShowRoomOptions(showRoomOptions === 'chat' ? null : 'chat')} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
                 
-                {showRoomOptions && (
+                {showRoomOptions === 'chat' && (
                    <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]">
-                      <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Chat</button>
+                      <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Isi Chat</button>
                    </div>
                 )}
               </div>
@@ -709,7 +749,10 @@ export default function App() {
               </div>
             ) : (
               <form onSubmit={handleSendMessage} className="bg-[#0f172a]/90 backdrop-blur-md px-4 py-2.5 flex items-end gap-2 shrink-0 z-10 border-t border-[#1e293b]">
-                <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
+                <input type="file" ref={fileInputRef} onChange={(e) => {
+                   const file = e.target.files[0];
+                   if(file){ setPendingUploadFile(file); setPendingPreviewUrl(file.type.startsWith('image/')?URL.createObjectURL(file):null); setUploadCaption(''); e.target.value='';}
+                }} className="hidden" />
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="text-[#94a3b8] hover:text-[#3b82f6] p-2.5 transition-colors bg-[#1e293b] rounded-xl border border-[#334155] mb-0.5">
                   <Paperclip size={16} />
                 </button>
@@ -766,7 +809,9 @@ export default function App() {
                       <p className="font-medium text-[#f1f5f9] text-[11px] truncate">{m.fileName}</p>
                     </div>
                     
+                    {/* JUMP TO MESSAGE BUTTON */}
                     <button onClick={() => jumpToMessage(m.id)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#3b82f6]/20 hover:text-[#3b82f6] transition text-[#94a3b8] shrink-0" title="Lihat di Chat"><Eye size={14}/></button>
+                    
                     <button onClick={() => handleForceDownload(m.fileData)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Unduh File"><Download size={14}/></button>
                   </div>
                 ))}
