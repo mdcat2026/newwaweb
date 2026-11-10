@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
-// Tambahan 'increment' untuk menghitung pesan belum terbaca dengan akurat di database
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
 import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star } from 'lucide-react';
 
@@ -18,6 +17,7 @@ const firebaseConfig = {
   appId: "1:1032322585458:web:2433c2d9552bbf83c243eb",
   measurementId: "G-9V5ZEQHC98"
 };
+
 
 // ==========================================
 // 2. PENGATURAN CLOUDINARY & ADMIN
@@ -52,6 +52,14 @@ export default function App() {
   const [editingMessage, setEditingMessage] = useState(null);
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
+  
+  // FIXED: State Notifikasi Dihapus, diganti dengan state pembacaan lokal
+  const [localReadStatus, setLocalReadStatus] = useState(() => {
+    // Ambil status baca terakhir dari local storage jika ada
+    const saved = localStorage.getItem('nexusReadStatus');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [unreadCounts, setUnreadCounts] = useState({}); 
   
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
@@ -99,6 +107,7 @@ export default function App() {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
       const processedRooms = [];
+      let newUnreadCounts = { ...unreadCounts };
       
       rooms.forEach(room => {
         const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
@@ -118,23 +127,45 @@ export default function App() {
               room.displayAvatar = room.avatar;
               room.displayName = room.name;
            }
+           
+           // FIX UNREAD CALCULATION
+           const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
+           const readTime = localReadStatus[room.id] || 0;
+           
+           if (roomTime > readTime && room.lastSenderId !== user.uid) {
+              if (activeGroup?.id !== room.id) {
+                // Gunakan angka unread dari database (jika ada) atau fallback ke 1
+                newUnreadCounts[room.id] = room.unreadCount?.[user.uid] || 1;
+              }
+           } else {
+              newUnreadCounts[room.id] = 0;
+           }
+
            processedRooms.push(room);
         }
       });
       
+      setUnreadCounts(newUnreadCounts);
       setChatRooms(processedRooms);
     });
     return () => unsub();
-  }, [user, contacts]);
+  }, [user, contacts, localReadStatus]); // dependency pada localReadStatus
 
   useEffect(() => {
     if (!user || !activeGroup) return;
     
-    // FIX BUG UNREAD COUNT: Reset jumlah pesan belum terbaca di Database saat membuka obrolan
+    // FIX BUG UNREAD COUNT: Reset dan simpan status baca ke Local Storage
     if (activeGroup.id) {
+       const now = Date.now();
+       setLocalReadStatus(prev => {
+          const newStatus = {...prev, [activeGroup.id]: now};
+          localStorage.setItem('nexusReadStatus', JSON.stringify(newStatus));
+          return newStatus;
+       });
+       
        updateDoc(doc(db, 'chatRooms', activeGroup.id), {
           [`unreadCount.${user.uid}`]: 0
-       }).catch(e => console.log("Gagal reset unread:", e));
+       }).catch(e => console.log("Gagal reset unread db:", e));
     }
 
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
@@ -227,7 +258,6 @@ export default function App() {
         text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false
       });
       
-      // Update Database Unread Count
       const updateData = {
          lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), 
          lastSenderId: user.uid, 
@@ -458,10 +488,12 @@ export default function App() {
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
+
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
 
+      {/* MODAL FORWARD INTERNAL */}
       {modalConfig.type === 'forward' && (
          <div className="fixed inset-0 z-[600] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
            <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
@@ -472,7 +504,7 @@ export default function App() {
              
              <div className="p-4 border-b border-[#334155] bg-[#0f172a]">
                 <button onClick={() => handleForwardToWA(messages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
-                   <Smartphone size={16} /> Teruskan ke WhatsApp
+                   <Smartphone size={16} /> Teruskan ke Luar (WhatsApp)
                 </button>
              </div>
 
@@ -506,6 +538,7 @@ export default function App() {
          </div>
       )}
 
+      {/* PREVIEW GAMBAR & DOKUMEN MODAL */}
       {previewMedia && (
         <div className="fixed inset-0 z-[500] bg-[#020617]/95 flex flex-col items-center justify-center p-4 backdrop-blur-md">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-10">
@@ -525,6 +558,7 @@ export default function App() {
         </div>
       )}
 
+      {/* POP-UP BUAT GRUP / JAPRI */}
       {modalConfig.type && modalConfig.type !== 'forward' && (
         <div className="fixed inset-0 z-[400] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
@@ -561,6 +595,7 @@ export default function App() {
         </div>
       )}
 
+      {/* LAYAR PRA-KIRIM FILE */}
       {pendingUploadFile && (
         <div className="fixed inset-0 z-[300] bg-[#020617]/95 flex flex-col backdrop-blur-sm">
            <div className="h-16 flex items-center px-4 shrink-0 border-b border-[#334155]">
@@ -577,7 +612,7 @@ export default function App() {
         </div>
       )}
 
-      {/* SIDEBAR KIRI */}
+      {/* 3. SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#1e293b] bg-[#0f172a] flex-col h-full z-10 shrink-0 shadow-2xl relative`}>
         
         <div className="absolute bottom-5 right-5 z-50">
@@ -595,7 +630,9 @@ export default function App() {
         <div className="bg-[#0f172a] h-16 flex items-center justify-between px-4 shrink-0 border-b border-[#1e293b]">
           <div className="flex items-center gap-3 overflow-hidden">
             <img src={user.photoURL} alt="Profil" className="w-8 h-8 rounded-xl shadow-md border border-[#334155]" />
-            <div><div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div></div>
+            <div>
+              <div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div>
+            </div>
           </div>
           <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
         </div>
@@ -620,7 +657,7 @@ export default function App() {
              </div>
           ) : (
              filteredRooms.map(room => {
-                const unreadCount = room.unreadCount?.[user.uid] || 0; // Fix akurat counter unread
+                const unreadCount = unreadCounts[room.id] || 0; 
                 return (
                   <div key={room.id} className={`flex items-center p-3 mb-1 rounded-xl transition-all relative ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
                     <div className="flex-1 flex items-center min-w-0 cursor-pointer" onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }}>
@@ -639,7 +676,6 @@ export default function App() {
                       <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition opacity-0 group-hover:opacity-100 lg:opacity-100">
                         <MoreVertical size={14} />
                       </button>
-                      {/* FIX TITIK TIGA DI LUAR ROOM */}
                       {showRoomOptions === room.id && (
                         <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]" onClick={e => e.stopPropagation()}>
                            <button onClick={() => handleDeleteRoom(room.id)} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
@@ -679,7 +715,6 @@ export default function App() {
                 <button onClick={() => setShowChatSearch(!showChatSearch)} className={`p-2 rounded-xl transition-colors ${showChatSearch ? 'bg-[#3b82f6]/20 text-[#3b82f6]' : 'text-[#94a3b8] hover:bg-[#1e293b]'}`} title="Cari pesan"><Search size={18} /></button>
                 <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === 'chat' ? null : 'chat'); }} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
                 
-                {/* FIX TITIK TIGA DI DALAM ROOM */}
                 {showRoomOptions === 'chat' && (
                    <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]" onClick={e => e.stopPropagation()}>
                       <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Isi Chat</button>
@@ -856,8 +891,11 @@ export default function App() {
                     <div className="flex-1 min-w-0 pr-1">
                       <p className="font-medium text-[#f1f5f9] text-[11px] truncate">{m.fileName}</p>
                     </div>
+                    
+                    {/* TOMBOL MATA UNTUK JUMP TO MESSAGE */}
                     <button onClick={() => jumpToMessage(m.id)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#3b82f6]/20 hover:text-[#3b82f6] transition text-[#94a3b8] shrink-0" title="Lihat di Chat"><Eye size={14}/></button>
-                    <button onClick={() => handleForceDownload(m.fileData)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Unduh File"><Download size={14}/></button>
+                    
+                    <a href={m.fileData} target="_blank" rel="noreferrer" className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Buka File"><Download size={14}/></a>
                   </div>
                 ))}
               </div>
