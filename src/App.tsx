@@ -3,9 +3,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, MoreVertical, Search, CheckCheck } from 'lucide-react';
+import { Send, LogOut, Paperclip, MoreVertical, Search, CheckCheck, FileText, Image as ImageIcon } from 'lucide-react';
 
-// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
+// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI (Ganti dengan kode Anda sendiri)
 const firebaseConfig = {
   apiKey: "AIzaSyDL0S4x9EXO5GCXORMHAzwdSRnFAKqcSpc",
   authDomain: "wac-test-mode.firebaseapp.com",
@@ -16,7 +16,7 @@ const firebaseConfig = {
   measurementId: "G-9V5ZEQHC98"
 };
 
-// 2. Inisialisasi Firebase
+// Inisialisasi Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -31,9 +31,11 @@ export default function App() {
   const [activeGroup, setActiveGroup] = useState(GROUPS[0]);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  // Pantau status login
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -41,7 +43,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Ambil pesan dari grup yang aktif
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
@@ -76,22 +77,62 @@ export default function App() {
     setNewMessage('');
   };
 
-  const handleForwardToWA = (text) => {
-    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+  // --- FUNGSI BARU: UPLOAD FILE & GAMBAR ---
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Batasi ukuran file 500KB
+    if (file.size > 500000) {
+      alert("Maaf, ukuran file maksimal adalah 500KB.");
+      e.target.value = '';
+      return;
+    }
+
+    setIsUploading(true);
+    const isImage = file.type.startsWith('image/');
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result;
+      
+      try {
+        await addDoc(collection(db, `messages_${activeGroup.id}`), {
+          text: '', 
+          fileData: base64String,
+          fileName: file.name,
+          isImage: isImage,
+          uid: user.uid,
+          senderName: user.displayName,
+          senderAvatar: user.photoURL,
+          timestamp: serverTimestamp()
+        });
+      } catch (error) {
+        console.error("Upload error:", error);
+        alert("Gagal mengirim file.");
+      }
+      setIsUploading(false);
+      e.target.value = ''; // Reset input
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleForwardToWA = (msg) => {
+    let waText = msg.text || '';
+    if (msg.fileName) {
+      waText = `*[File: ${msg.fileName}]* ${waText}`;
+    }
+    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
     window.open(waUrl, '_blank');
   };
 
-  // --- HALAMAN LOGIN ---
   if (!user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#f0f2f5]">
         <div className="bg-white p-10 rounded-lg shadow-lg text-center max-w-sm w-full">
           <h1 className="text-3xl font-bold text-[#00a884] mb-2">Web Chat</h1>
           <p className="mb-8 text-gray-500">Silakan login untuk masuk ke grup.</p>
-          <button 
-            onClick={handleLogin} 
-            className="w-full bg-[#00a884] text-white py-3 rounded hover:bg-[#008f6f] transition font-semibold"
-          >
+          <button onClick={handleLogin} className="w-full bg-[#00a884] text-white py-3 rounded hover:bg-[#008f6f] transition font-semibold">
             Login dengan Google
           </button>
         </div>
@@ -99,23 +140,20 @@ export default function App() {
     );
   }
 
-  // --- HALAMAN CHAT UTAMA ---
   return (
     <div className="flex h-screen bg-[#f0f2f5] font-sans">
       {/* Sidebar Grup */}
       <div className="w-1/3 border-r border-gray-300 bg-white flex flex-col">
-        {/* Header Profil Saya */}
         <div className="bg-[#f0f2f5] h-16 flex items-center justify-between px-4 py-2 border-b">
           <div className="flex items-center gap-3">
             <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full" />
             <span className="font-semibold text-gray-700 truncate">{user.displayName}</span>
           </div>
-          <button onClick={() => signOut(auth)} title="Logout" className="text-gray-500 hover:text-red-500">
+          <button onClick={() => signOut(auth)} className="text-gray-500 hover:text-red-500">
             <LogOut size={20} />
           </button>
         </div>
         
-        {/* Search */}
         <div className="p-2 border-b bg-white">
           <div className="bg-[#f0f2f5] flex items-center rounded-lg px-3 py-1.5">
             <Search size={18} className="text-gray-500" />
@@ -123,7 +161,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Daftar Grup */}
         <div className="flex-1 overflow-y-auto">
           {GROUPS.map(group => (
             <div 
@@ -142,15 +179,11 @@ export default function App() {
 
       {/* Area Chat */}
       <div className="flex-1 flex flex-col bg-[#efeae2]" style={{ backgroundImage: "url('https://web.whatsapp.com/img/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')", opacity: 0.9 }}>
-        {/* Header Grup */}
         <div className="bg-[#f0f2f5] h-16 flex items-center px-4 border-b">
           <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-3" />
-          <div>
-            <h2 className="font-medium text-gray-800">{activeGroup.name}</h2>
-          </div>
+          <h2 className="font-medium text-gray-800">{activeGroup.name}</h2>
         </div>
 
-        {/* Daftar Pesan */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
           {messages.map((msg) => {
             const isMe = msg.uid === user.uid;
@@ -158,15 +191,24 @@ export default function App() {
               <div key={msg.id} className={`flex flex-col relative group max-w-[65%] ${isMe ? 'self-end' : 'self-start'}`}>
                 {!isMe && <span className="text-xs text-gray-500 ml-1 mb-1">{msg.senderName}</span>}
                 <div className={`p-2 px-3 rounded-lg shadow-sm text-sm relative ${isMe ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
-                  {msg.text}
+                  
+                  {/* Tampilan Gambar/Dokumen */}
+                  {msg.isImage && <img src={msg.fileData} alt="attachment" className="max-w-[200px] rounded mb-1" />}
+                  {!msg.isImage && msg.fileData && (
+                    <a href={msg.fileData} download={msg.fileName} className="flex items-center gap-2 bg-black/5 p-2 rounded mb-1 text-gray-800 hover:bg-black/10">
+                      <FileText size={18} className="text-[#00a884]" />
+                      <span className="font-medium truncate max-w-[150px]">{msg.fileName}</span>
+                    </a>
+                  )}
+                  
+                  {msg.text && <span>{msg.text}</span>}
                   <span className="text-[10px] text-gray-400 ml-3 float-right mt-1 flex items-center">
-                    {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}
+                    {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'}
                     {isMe && <CheckCheck size={14} className="ml-1 text-blue-500" />}
                   </span>
                   
-                  {/* Tombol Teruskan ke WA (Muncul saat di-hover) */}
                   <button 
-                    onClick={() => handleForwardToWA(msg.text)}
+                    onClick={() => handleForwardToWA(msg)}
                     className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 bg-white rounded-full shadow hover:bg-gray-100 transition"
                     title="Teruskan ke WhatsApp"
                   >
@@ -179,11 +221,26 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Kirim Pesan */}
+        {/* Input Form & Tombol Lampiran */}
         <form onSubmit={handleSendMessage} className="bg-[#f0f2f5] p-3 flex items-center gap-3">
-          <button type="button" className="text-gray-500 hover:text-gray-700 p-2">
-            <Paperclip size={24} />
+          
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+            accept="image/*,.pdf,.doc,.docx,.txt"
+            className="hidden" 
+          />
+          
+          <button 
+            type="button" 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className={`text-gray-500 hover:text-gray-700 p-2 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {isUploading ? <div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={24} />}
           </button>
+          
           <input 
             type="text" 
             value={newMessage}
