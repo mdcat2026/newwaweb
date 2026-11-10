@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, MoreVertical, MessageSquare, CheckSquare, Square } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, MoreVertical, MessageSquare, CheckSquare, Square, MessageSquarePlus } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI BAWAH INI
@@ -23,20 +23,19 @@ const firebaseConfig = {
 // ==========================================
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
 const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
-const ADMIN_EMAIL = 'buerfood24@gmail.com'; // GANTI: Email ini bisa hapus pesan siapa saja!
+const ADMIN_EMAIL = 'buyerfood24@gmail.com'; 
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const GROUPS = [
-  { id: 'g1', name: 'Keluarga Cemara 🏡', avatar: 'https://api.dicebear.com/7.x/initials/svg?seed=KC&backgroundColor=00a884' },
-  { id: 'g2', name: 'Project Kantor 💻', avatar: 'https://api.dicebear.com/7.x/initials/svg?seed=PK&backgroundColor=0284c7' },
-];
-
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeGroup, setActiveGroup] = useState(GROUPS[0]);
+  
+  // STATE BARU UNTUK DAFTAR CHAT DINAMIS
+  const [chatRooms, setChatRooms] = useState([]);
+  const [activeGroup, setActiveGroup] = useState(null);
+  
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -66,8 +65,20 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // MENGAMBIL DAFTAR CHAT DARI DATABASE
   useEffect(() => {
     if (!user) return;
+    const qRooms = query(collection(db, 'chatRooms'), orderBy('createdAt', 'desc'));
+    const unsubRooms = onSnapshot(qRooms, (snapshot) => {
+      const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setChatRooms(rooms);
+    });
+    return () => unsubRooms();
+  }, [user]);
+
+  // MENGAMBIL PESAN BERDASARKAN CHAT YANG DIPILIH
+  useEffect(() => {
+    if (!user || !activeGroup) return;
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -78,16 +89,37 @@ export default function App() {
     setSelectedMessages([]);
     setShowGroupInfo(false); 
     return () => unsubscribe();
-  }, [activeGroup.id, user]);
+  }, [activeGroup?.id, user]);
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } 
     catch (error) { console.error("Error login:", error); }
   };
 
+  // FITUR MEMBUAT CHAT ATAU GRUP BARU
+  const handleCreateNewChat = async () => {
+    const chatName = window.prompt("Masukkan Nama Grup atau Nama Teman untuk chat baru:");
+    if (!chatName || !chatName.trim()) return;
+
+    try {
+      const newRoom = await addDoc(collection(db, 'chatRooms'), {
+        name: chatName,
+        avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(chatName)}&backgroundColor=00a884`,
+        createdAt: serverTimestamp(),
+        createdBy: user.uid,
+        creatorName: user.displayName
+      });
+      // Otomatis buka chat yang baru dibuat
+      setActiveGroup({ id: newRoom.id, name: chatName });
+      setIsMobileChatOpen(true);
+    } catch (error) {
+      alert("Gagal membuat percakapan baru.");
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || !activeGroup) return;
     
     if (editingMessage) {
       await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), { text: newMessage, isEdited: true });
@@ -156,7 +188,7 @@ export default function App() {
   };
 
   const confirmUpload = async () => {
-    if (!pendingUploadFile) return;
+    if (!pendingUploadFile || !activeGroup) return;
     setIsUploading(true);
     
     const isImage = pendingUploadFile.type.startsWith('image/');
@@ -194,7 +226,7 @@ export default function App() {
       }
     } catch (error) {
       console.error("Cloudinary error:", error);
-      alert(`GAGAL UPLOAD!\n\nPesan dari Cloudinary: "${error.message}"\n\nCek kembali Cloud Name dan Preset Anda.`);
+      alert(`GAGAL UPLOAD!\n\nPesan dari Cloudinary: "${error.message}"`);
     }
     setIsUploading(false);
   };
@@ -205,7 +237,6 @@ export default function App() {
     setUploadCaption('');
   };
 
-  // --- SOLUSI DOWNLOAD: MEMAKSA NAMA FILE ASLI ---
   const handleForceDownload = async (e, url, filename) => {
     e.preventDefault();
     try {
@@ -220,7 +251,6 @@ export default function App() {
       document.body.removeChild(link);
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      console.error("Gagal mode paksa, menggunakan unduhan default:", err);
       window.open(url, '_blank');
     }
   };
@@ -251,16 +281,14 @@ export default function App() {
     }
   };
 
-  // --- SOLUSI FORWARD: FILE ASLI JIKA < 5MB ATAU LINK FORMAT BARU ---
   const executeForward = async (msgsToForward) => {
-    // Coba Share File Bawaan HP jika HANYA 1 pesan dan ukurannya di bawah 5MB
     if (msgsToForward.length === 1 && msgsToForward[0].fileData && navigator.canShare) {
       try {
         const msg = msgsToForward[0];
         const response = await fetch(msg.fileData);
         const blob = await response.blob();
         
-        if (blob.size <= 5 * 1024 * 1024) { // Cek File < 5MB
+        if (blob.size <= 5 * 1024 * 1024) { 
           const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
           if (navigator.canShare({ files: [file] })) {
             await navigator.share({
@@ -271,15 +299,14 @@ export default function App() {
             setIsSelectionMode(false);
             setSelectedMessages([]);
             setOpenMenuId(null);
-            return; // Sukses kirim file asli!
+            return; 
           }
         }
       } catch (error) {
-        console.log("Perangkat/Browser tidak mendukung direct share, kembali ke mode Link.");
+        console.log("Fallback ke mode Link.");
       }
     }
 
-    // Metode Teks/Link (Untuk banyak pesan atau file > 5MB)
     let finalWaText = msgsToForward.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
@@ -312,12 +339,12 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
-      {/* 1. LAYAR PRA-KIRIM FILE (PRE-SEND PREVIEW) SEPERTI WA */}
+      {/* 1. LAYAR PRA-KIRIM FILE */}
       {pendingUploadFile && (
         <div className="fixed inset-0 z-[300] bg-[#0b141a] flex flex-col">
           <div className="h-16 flex items-center px-4 shrink-0 bg-[#202c33] shadow-md z-10">
             <button onClick={cancelUpload} className="text-[#aebac1] p-2 hover:bg-[#2a3942] rounded-full transition"><X size={26} /></button>
-            <span className="text-[#e9edef] ml-4 font-medium text-[17px]">Kirim ke {activeGroup.name}</span>
+            <span className="text-[#e9edef] ml-4 font-medium text-[17px]">Kirim ke {activeGroup?.name}</span>
           </div>
           
           <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
@@ -356,7 +383,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. MODAL PREVIEW FILE (PESAN TERKIRIM) */}
+      {/* 2. MODAL PREVIEW FILE */}
       {previewMedia && (
         <div className="fixed inset-0 z-[200] bg-[#0b141a]/95 flex flex-col items-center justify-center p-4">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
@@ -376,17 +403,19 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. SIDEBAR KIRI (DAFTAR GRUP) */}
+      {/* 3. SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#222d34] bg-[#111b21] flex-col h-full z-10 shrink-0`}>
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 py-2 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden cursor-pointer">
             <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full shrink-0" />
             <span className="font-semibold text-[#e9edef] truncate">{user.displayName}</span>
           </div>
-          <div className="flex items-center gap-3 text-[#aebac1]">
-            <MessageSquare size={20} className="cursor-pointer hover:text-[#e9edef]" />
-            <MoreVertical size={20} className="cursor-pointer hover:text-[#e9edef]" />
-            <button onClick={() => signOut(auth)} title="Logout" className="hover:text-red-400 ml-1"><LogOut size={18} /></button>
+          <div className="flex items-center gap-2 text-[#aebac1]">
+            {/* TOMBOL TAMBAH CHAT BARU */}
+            <button onClick={handleCreateNewChat} title="Mulai Chat Baru" className="hover:bg-[#2a3942] p-2 rounded-full transition-colors text-[#e9edef]">
+              <MessageSquarePlus size={20} />
+            </button>
+            <button onClick={() => signOut(auth)} title="Logout" className="hover:text-red-400 p-2 rounded-full transition-colors ml-1"><LogOut size={18} /></button>
           </div>
         </div>
         
@@ -397,169 +426,183 @@ export default function App() {
           </div>
         </div>
 
+        {/* DAFTAR CHAT ROOM DINAMIS DARI DATABASE */}
         <div className="flex-1 overflow-y-auto bg-[#111b21]">
-          {GROUPS.map(group => (
-            <div key={group.id} onClick={() => { setActiveGroup(group); setIsMobileChatOpen(true); }} className={`flex items-center px-3 py-3 cursor-pointer hover:bg-[#202c33] transition ${activeGroup.id === group.id ? 'bg-[#2a3942]' : ''}`}>
-              <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full mr-4 shrink-0" />
+          {chatRooms.map(room => (
+            <div key={room.id} onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }} className={`flex items-center px-3 py-3 cursor-pointer hover:bg-[#202c33] transition ${activeGroup?.id === room.id ? 'bg-[#2a3942]' : ''}`}>
+              <img src={room.avatar} alt={room.name} className="w-12 h-12 rounded-full mr-4 shrink-0" />
               <div className="flex-1 border-b border-[#222d34] pb-4 truncate pt-1">
-                <h3 className="font-medium text-[#e9edef] truncate text-[17px] mb-1">{group.name}</h3>
+                <h3 className="font-medium text-[#e9edef] truncate text-[17px] mb-1">{room.name}</h3>
                 <p className="text-sm text-[#8696a0] truncate">Ketuk untuk melihat pesan...</p>
               </div>
             </div>
           ))}
+          {chatRooms.length === 0 && (
+            <div className="p-6 text-center text-[#8696a0] text-sm">
+              Belum ada obrolan.<br/>Klik ikon <strong>(+)</strong> di atas untuk memulai.
+            </div>
+          )}
         </div>
       </div>
 
       {/* 4. AREA CHAT TENGAH */}
       <div className={`${isMobileChatOpen && !showGroupInfo ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative min-w-0`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
-        <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34] cursor-pointer" onClick={() => setShowGroupInfo(!showGroupInfo)}>
-          <div className="flex items-center min-w-0">
-            <button onClick={(e) => { e.stopPropagation(); setIsMobileChatOpen(false); }} className="md:hidden mr-3 text-[#aebac1] p-1"><ArrowLeft size={24} /></button>
-            <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-4 shrink-0" />
-            <div className="truncate">
-              <h2 className="font-medium text-[#e9edef] truncate text-[16px]">{activeGroup.name}</h2>
-              <p className="text-xs text-[#8696a0] truncate">klik di sini untuk info grup</p>
-            </div>
-          </div>
-          {isSelectionMode && (
-            <div className="flex items-center gap-3 text-[#00a884] font-medium text-sm md:text-base shrink-0" onClick={e => e.stopPropagation()}>
-              <span>{selectedMessages.length} dipilih</span>
-              <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="p-2 hover:bg-[#2a3942] rounded-full transition text-[#aebac1]"><X size={20} /></button>
-            </div>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 md:px-16 flex flex-col gap-1 relative z-0 pb-4">
-          {messages.map((msg, index) => {
-            const isMe = msg.uid === user.uid;
-            const isMenuOpen = openMenuId === msg.id;
-            const isSelected = selectedMessages.includes(msg.id);
-            const prevMsg = index > 0 ? messages[index - 1] : null;
-            const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
-            const marginTop = isSameSenderAsPrev ? 'mt-0' : 'mt-3';
-
-            return (
-              <div key={msg.id} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
-                
-                {isSelectionMode && (
-                  <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] bg-white rounded flex items-center justify-center shrink-0 shadow-sm">
-                    {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-gray-400" />}
-                  </div>
-                )}
-
-                <div onClick={() => isSelectionMode && toggleSelection(msg.id)} className={`flex flex-col relative max-w-[85%] md:max-w-[70%] lg:max-w-[75%] ${isSelectionMode ? 'cursor-pointer' : ''}`}>
-                  <div className={`p-1.5 px-2.5 rounded-lg shadow-sm text-[15px] relative break-words leading-[1.3] transition-colors
-                    ${isMe ? 'bg-[#005c4b] text-[#e9edef]' : 'bg-[#202c33] text-[#e9edef]'}
-                    ${!isSameSenderAsPrev ? (isMe ? 'rounded-tr-none' : 'rounded-tl-none') : ''}
-                    ${isSelected ? 'opacity-75 ring-2 ring-[#00a884]' : ''}
-                  `}>
-                    
-                    {(!isMe && !isSameSenderAsPrev) && (
-                      <div className="text-[12.5px] font-semibold text-[#53bdeb] mb-1">{msg.senderName}</div>
-                    )}
-
-                    {!isSelectionMode && (
-                      <div onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : msg.id); }}
-                        className={`absolute top-1 right-1 cursor-pointer p-1 rounded-bl-lg rounded-tr-lg z-20 transition-opacity
-                          ${isMe ? 'bg-gradient-to-l from-[#005c4b] via-[#005c4b]' : 'bg-gradient-to-l from-[#202c33] via-[#202c33]'}
-                          md:opacity-0 md:group-hover:opacity-100 ${isMenuOpen ? 'opacity-100' : ''} to-transparent
-                        `}
-                      >
-                        <ChevronDown size={22} className="text-[#8696a0]" />
-                      </div>
-                    )}
-
-                    {isMenuOpen && (
-                      <div onClick={(e) => e.stopPropagation()} className={`absolute top-8 ${isMe ? 'right-0' : 'left-5'} bg-[#233138] border border-[#2a3942] shadow-2xl rounded py-2 w-44 z-[100]`}>
-                        <button onClick={() => executeForward([msg])} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                          <Share2 size={18} /> Teruskan (Langsung)
-                        </button>
-                        <button onClick={() => startSelectionMode(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3 border-b border-[#2a3942]">
-                          <CheckSquare size={18} /> Pilih banyak pesan
-                        </button>
-                        {isMe && (
-                          <button onClick={() => startEditing(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                            <Edit2 size={18} /> Edit pesan
-                          </button>
-                        )}
-                        
-                        {/* TOMBOL HAPUS (MUNCUL JIKA ANDA PENGIRIM ATAU JIKA ANDA ADMIN) */}
-                        {(isMe || isAdmin) && (
-                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                            <Trash2 size={18} /> Hapus pesan
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    
-                    {msg.isImage && (
-                      <div className="relative mt-0.5 mx-0.5 cursor-pointer" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
-                        <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[320px] rounded mb-1 object-cover hover:opacity-95 transition" />
-                      </div>
-                    )}
-
-                    {!msg.isImage && msg.fileData && (
-                      <div className="flex items-center gap-3 bg-[#1e2a30] p-3 rounded mb-1 mt-1 border border-[#2a3942] cursor-pointer hover:bg-[#233138] transition" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
-                        <div className="p-2 bg-[#ff8f6e] rounded text-white shrink-0"><FileText size={20} /></div>
-                        <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm text-[#e9edef]">{msg.fileName}</p></div>
-                      </div>
-                    )}
-                    
-                    {msg.text && (
-                      <div dangerouslySetInnerHTML={formatText(msg.text)} className={`mt-0.5 px-1 ${msg.text.length < 10 && !msg.isImage ? 'pr-12' : 'pr-3'} text-[14.2px]`} />
-                    )}
-                    
-                    <div className={`flex items-center justify-end gap-1 ${msg.text && msg.text.length < 10 && !msg.isImage && !msg.fileData ? 'absolute bottom-1 right-2' : 'mt-1 mr-1 float-right'}`}>
-                      {msg.isEdited && <span className="text-[11px] text-[#8696a0] italic mr-1 text-opacity-80">diedit</span>}
-                      <span className="text-[11px] text-[#8696a0] text-opacity-90">{msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
-                      {isMe && <CheckCheck size={16} className="text-[#53bdeb]" />}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {isSelectionMode ? (
-          <div className="bg-[#202c33] px-4 py-3 flex justify-between items-center z-10 shadow-lg border-t border-[#222d34]">
-            <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="text-[#00a884] font-medium p-2 hover:bg-[#2a3942] rounded-lg transition">Batal</button>
-            <button onClick={() => executeForward(messages.filter(m => selectedMessages.includes(m.id)))} disabled={selectedMessages.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-full font-medium transition ${selectedMessages.length > 0 ? 'bg-[#00a884] text-[#111b21] hover:bg-[#008f6f]' : 'bg-[#2a3942] text-[#8696a0] cursor-not-allowed'}`}>
-              <Share2 size={18} /> Teruskan ke WA
-            </button>
+        {!activeGroup ? (
+          /* TAMPILAN JIKA BELUM ADA CHAT YANG DIPILIH */
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#222d34] border-b-8 border-[#00a884]">
+             <img src="https://static.whatsapp.net/rsrc.php/v3/y6/r/wa669aeJeom.png" alt="WA Web" className="w-80 opacity-80 mb-8" />
+             <h1 className="text-3xl font-light text-[#e9edef] mb-4">Web Chat Pro</h1>
+             <p className="text-[#8696a0] text-sm">Pilih obrolan di sebelah kiri atau buat percakapan baru.</p>
           </div>
         ) : (
-          <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10 border-t border-[#222d34]">
-            <div className="flex gap-1 shrink-0 mb-1">
-              <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
-              <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
-              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${editingMessage ? 'opacity-50' : ''}`}>
-                <Paperclip size={24} className="transform -rotate-45" />
-              </button>
+          <>
+            <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34] cursor-pointer" onClick={() => setShowGroupInfo(!showGroupInfo)}>
+              <div className="flex items-center min-w-0">
+                <button onClick={(e) => { e.stopPropagation(); setIsMobileChatOpen(false); }} className="md:hidden mr-3 text-[#aebac1] p-1"><ArrowLeft size={24} /></button>
+                <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-4 shrink-0" />
+                <div className="truncate">
+                  <h2 className="font-medium text-[#e9edef] truncate text-[16px]">{activeGroup.name}</h2>
+                  <p className="text-xs text-[#8696a0] truncate">klik di sini untuk info grup</p>
+                </div>
+              </div>
+              {isSelectionMode && (
+                <div className="flex items-center gap-3 text-[#00a884] font-medium text-sm md:text-base shrink-0" onClick={e => e.stopPropagation()}>
+                  <span>{selectedMessages.length} dipilih</span>
+                  <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="p-2 hover:bg-[#2a3942] rounded-full transition text-[#aebac1]"><X size={20} /></button>
+                </div>
+              )}
             </div>
-            <div className="flex-1 bg-[#2a3942] rounded-lg mb-1 flex items-center pl-4 pr-1">
-              <textarea ref={textareaRef} value={newMessage} onChange={handleInputResize} onKeyDown={handleKeyDown} rows={1} placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"} className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]" />
+
+            <div className="flex-1 overflow-y-auto p-4 md:px-16 flex flex-col gap-1 relative z-0 pb-4">
+              {messages.map((msg, index) => {
+                const isMe = msg.uid === user.uid;
+                const isMenuOpen = openMenuId === msg.id;
+                const isSelected = selectedMessages.includes(msg.id);
+                const prevMsg = index > 0 ? messages[index - 1] : null;
+                const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
+                const marginTop = isSameSenderAsPrev ? 'mt-0' : 'mt-3';
+
+                return (
+                  <div key={msg.id} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
+                    
+                    {isSelectionMode && (
+                      <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] bg-white rounded flex items-center justify-center shrink-0 shadow-sm">
+                        {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-gray-400" />}
+                      </div>
+                    )}
+
+                    <div onClick={() => isSelectionMode && toggleSelection(msg.id)} className={`flex flex-col relative max-w-[85%] md:max-w-[70%] lg:max-w-[75%] ${isSelectionMode ? 'cursor-pointer' : ''}`}>
+                      <div className={`p-1.5 px-2.5 rounded-lg shadow-sm text-[15px] relative break-words leading-[1.3] transition-colors
+                        ${isMe ? 'bg-[#005c4b] text-[#e9edef]' : 'bg-[#202c33] text-[#e9edef]'}
+                        ${!isSameSenderAsPrev ? (isMe ? 'rounded-tr-none' : 'rounded-tl-none') : ''}
+                        ${isSelected ? 'opacity-75 ring-2 ring-[#00a884]' : ''}
+                      `}>
+                        
+                        {(!isMe && !isSameSenderAsPrev) && (
+                          <div className="text-[12.5px] font-semibold text-[#53bdeb] mb-1">{msg.senderName}</div>
+                        )}
+
+                        {!isSelectionMode && (
+                          <div onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : msg.id); }}
+                            className={`absolute top-1 right-1 cursor-pointer p-1 rounded-bl-lg rounded-tr-lg z-20 transition-opacity
+                              ${isMe ? 'bg-gradient-to-l from-[#005c4b] via-[#005c4b]' : 'bg-gradient-to-l from-[#202c33] via-[#202c33]'}
+                              md:opacity-0 md:group-hover:opacity-100 ${isMenuOpen ? 'opacity-100' : ''} to-transparent
+                            `}
+                          >
+                            <ChevronDown size={22} className="text-[#8696a0]" />
+                          </div>
+                        )}
+
+                        {isMenuOpen && (
+                          <div onClick={(e) => e.stopPropagation()} className={`absolute top-8 ${isMe ? 'right-0' : 'left-5'} bg-[#233138] border border-[#2a3942] shadow-2xl rounded py-2 w-44 z-[100]`}>
+                            <button onClick={() => executeForward([msg])} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                              <Share2 size={18} /> Teruskan (Langsung)
+                            </button>
+                            <button onClick={() => startSelectionMode(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3 border-b border-[#2a3942]">
+                              <CheckSquare size={18} /> Pilih banyak pesan
+                            </button>
+                            {isMe && (
+                              <button onClick={() => startEditing(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                                <Edit2 size={18} /> Edit pesan
+                              </button>
+                            )}
+                            {(isMe || isAdmin) && (
+                              <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                                <Trash2 size={18} /> Hapus pesan
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        
+                        {msg.isImage && (
+                          <div className="relative mt-0.5 mx-0.5 cursor-pointer" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
+                            <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[320px] rounded mb-1 object-cover hover:opacity-95 transition" />
+                          </div>
+                        )}
+
+                        {!msg.isImage && msg.fileData && (
+                          <div className="flex items-center gap-3 bg-[#1e2a30] p-3 rounded mb-1 mt-1 border border-[#2a3942] cursor-pointer hover:bg-[#233138] transition" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
+                            <div className="p-2 bg-[#ff8f6e] rounded text-white shrink-0"><FileText size={20} /></div>
+                            <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm text-[#e9edef]">{msg.fileName}</p></div>
+                          </div>
+                        )}
+                        
+                        {msg.text && (
+                          <div dangerouslySetInnerHTML={formatText(msg.text)} className={`mt-0.5 px-1 ${msg.text.length < 10 && !msg.isImage ? 'pr-12' : 'pr-3'} text-[14.2px]`} />
+                        )}
+                        
+                        <div className={`flex items-center justify-end gap-1 ${msg.text && msg.text.length < 10 && !msg.isImage && !msg.fileData ? 'absolute bottom-1 right-2' : 'mt-1 mr-1 float-right'}`}>
+                          {msg.isEdited && <span className="text-[11px] text-[#8696a0] italic mr-1 text-opacity-80">diedit</span>}
+                          <span className="text-[11px] text-[#8696a0] text-opacity-90">{msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
+                          {isMe && <CheckCheck size={16} className="text-[#53bdeb]" />}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
             </div>
-            <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors"><Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} /></button>
-          </form>
+
+            {isSelectionMode ? (
+              <div className="bg-[#202c33] px-4 py-3 flex justify-between items-center z-10 shadow-lg border-t border-[#222d34]">
+                <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="text-[#00a884] font-medium p-2 hover:bg-[#2a3942] rounded-lg transition">Batal</button>
+                <button onClick={() => executeForward(messages.filter(m => selectedMessages.includes(m.id)))} disabled={selectedMessages.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-full font-medium transition ${selectedMessages.length > 0 ? 'bg-[#00a884] text-[#111b21] hover:bg-[#008f6f]' : 'bg-[#2a3942] text-[#8696a0] cursor-not-allowed'}`}>
+                  <Share2 size={18} /> Teruskan ke WA
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10 border-t border-[#222d34]">
+                <div className="flex gap-1 shrink-0 mb-1">
+                  <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
+                  <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${editingMessage ? 'opacity-50' : ''}`}>
+                    <Paperclip size={24} className="transform -rotate-45" />
+                  </button>
+                </div>
+                <div className="flex-1 bg-[#2a3942] rounded-lg mb-1 flex items-center pl-4 pr-1">
+                  <textarea ref={textareaRef} value={newMessage} onChange={handleInputResize} onKeyDown={handleKeyDown} rows={1} placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"} className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]" />
+                </div>
+                <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors"><Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} /></button>
+              </form>
+            )}
+          </>
         )}
       </div>
 
-      {/* 5. SIDEBAR INFO GRUP KANAN (FITUR FOLDER MEDIA & DOKUMEN) */}
-      {showGroupInfo && (
+      {/* 5. SIDEBAR INFO GRUP KANAN */}
+      {showGroupInfo && activeGroup && (
         <div className={`w-full md:w-[350px] lg:w-[400px] border-l border-[#222d34] bg-[#111b21] flex-col h-full z-20 absolute right-0 md:relative ${showGroupInfo ? 'flex' : 'hidden'}`}>
           <div className="bg-[#202c33] h-16 flex items-center px-4 shrink-0 shadow-sm gap-4">
             <button onClick={() => setShowGroupInfo(false)} className="text-[#aebac1] hover:bg-[#2a3942] p-2 rounded-full transition-colors"><X size={20} /></button>
-            <span className="text-[#e9edef] font-medium text-[16px]">Info grup</span>
+            <span className="text-[#e9edef] font-medium text-[16px]">Info obrolan</span>
           </div>
 
           <div className="flex-1 overflow-y-auto bg-[#0b141a]">
             <div className="flex flex-col items-center py-8 bg-[#111b21] mb-2 shadow-sm">
               <img src={activeGroup.avatar} alt="Avatar" className="w-48 h-48 rounded-full mb-4 object-cover" />
               <h2 className="text-[#e9edef] text-xl font-medium">{activeGroup.name}</h2>
-              <p className="text-[#8696a0] text-sm mt-1">Grup Pribadi</p>
             </div>
 
             <div className="bg-[#111b21] p-4 shadow-sm min-h-[300px]">
