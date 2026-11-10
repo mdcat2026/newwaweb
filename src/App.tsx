@@ -21,8 +21,8 @@ const firebaseConfig = {
 // ==========================================
 // 2. TEMPEL KUNCI CLOUDINARY ANDA DI BAWAH INI
 // ==========================================
-const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // contoh: 'm8cnadmw' (Tanpa spasi)
-const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // contoh: 'Newwaweb' (Sesuai huruf besar/kecil)
+const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
+const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -48,7 +48,6 @@ export default function App() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
   
-  // STATE UNTUK LAYAR PRA-KIRIM (Pre-send Preview ala WA)
   const [pendingUploadFile, setPendingUploadFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [uploadCaption, setUploadCaption] = useState('');
@@ -130,7 +129,6 @@ export default function App() {
     }
   };
 
-  // --- LOGIKA MEMILIH FILE & MEMBUKA LAYAR PREVIEW ---
   const handleFileSelection = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -143,7 +141,6 @@ export default function App() {
     setPendingUploadFile(file);
     setUploadCaption('');
     
-    // Buat URL sementara untuk preview di layar pra-kirim
     if (file.type.startsWith('image/')) {
       setPendingPreviewUrl(URL.createObjectURL(file));
     } else {
@@ -152,14 +149,11 @@ export default function App() {
     e.target.value = ''; 
   };
 
-  // --- LOGIKA UPLOAD KE CLOUDINARY DARI LAYAR PREVIEW ---
   const confirmUpload = async () => {
     if (!pendingUploadFile) return;
     setIsUploading(true);
     
     const isImage = pendingUploadFile.type.startsWith('image/');
-    
-    // PENTING: File dokumen seperti PDF/XLSX butuh tipe 'raw', sedangkan gambar butuh tipe 'image'
     const resourceType = isImage ? 'image' : 'raw';
     
     const formData = new FormData();
@@ -175,7 +169,6 @@ export default function App() {
       const data = await response.json();
 
       if (data.secure_url) {
-        // Jika sukses, simpan ke Firebase Database
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
           text: uploadCaption || '', 
           fileData: data.secure_url, 
@@ -187,12 +180,10 @@ export default function App() {
           timestamp: serverTimestamp()
         });
         
-        // Tutup layar pra-kirim setelah sukses
         setPendingUploadFile(null);
         setPendingPreviewUrl(null);
         setUploadCaption('');
       } else {
-        // Tangkap pesan error ASLI dari Cloudinary jika gagal
         throw new Error(data.error?.message || "Upload gagal dengan pesan tak dikenal.");
       }
     } catch (error) {
@@ -234,13 +225,49 @@ export default function App() {
     }
   };
 
+  // --- LOGIKA FORWARD SATUAN DIPERBAIKI (MENYERTAKAN LINK CLOUDINARY) ---
+  const handleForwardToWA = async (msg) => {
+    // 1. Coba gunakan fitur "Share Bawaan HP" jika ada file dan dibuka di HP
+    if (msg.fileData && navigator.canShare) {
+      try {
+        // Mengubah URL gambar/file dari Cloudinary menjadi file utuh sementara
+        const response = await fetch(msg.fileData);
+        const blob = await response.blob();
+        const file = new File([blob], msg.fileName || 'file', { type: blob.type });
+
+        // Memanggil menu Share bawaan Android/iOS
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: msg.fileName,
+            text: msg.text || '',
+            files: [file]
+          });
+          setOpenMenuId(null);
+          return; // Berhenti di sini jika berhasil share file asli!
+        }
+      } catch (error) {
+        console.log("Perangkat tidak mendukung direct share file, kembali ke mode link.");
+      }
+    }
+
+    // 2. Jika di PC atau HP gagal memproses file, kembali ke metode Teks + Link
+    let waText = msg.text || '';
+    if (msg.fileName) {
+      waText = `📁 *[File: ${msg.fileName}]*\n🔗 Link Unduh: ${msg.fileData}\n\n${waText}`;
+    }
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`, '_blank');
+    setOpenMenuId(null);
+  };
+
+  // --- LOGIKA MULTI-FORWARD DIPERBAIKI (MENYERTAKAN LINK CLOUDINARY) ---
   const executeMultiForward = () => {
     const msgsToForward = messages.filter(m => selectedMessages.includes(m.id));
     let finalWaText = msgsToForward.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
       if (m.fileName) {
-          return `${header}\n📁 [File: ${m.fileName}]\n${textSegment}`;
+          // Menyertakan link data dari Cloudinary
+          return `${header}\n📁 [File: ${m.fileName}]\n🔗 Link: ${m.fileData}\n${textSegment}`;
       }
       return `${header}\n${textSegment}`;
     }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
@@ -267,12 +294,9 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
-      {/* ==================================================== */}
-      {/* 1. LAYAR PRA-KIRIM FILE (PRE-SEND PREVIEW) SEPERTI WA */}
-      {/* ==================================================== */}
+      {/* LAYAR PRA-KIRIM FILE (PRE-SEND PREVIEW) */}
       {pendingUploadFile && (
         <div className="fixed inset-0 z-[300] bg-[#0b141a] flex flex-col">
-          {/* Header */}
           <div className="h-16 flex items-center px-4 shrink-0 bg-[#202c33] shadow-md z-10">
             <button onClick={cancelUpload} className="text-[#aebac1] p-2 hover:bg-[#2a3942] rounded-full transition">
               <X size={26} />
@@ -280,7 +304,6 @@ export default function App() {
             <span className="text-[#e9edef] ml-4 font-medium text-[17px]">Kirim ke {activeGroup.name}</span>
           </div>
           
-          {/* Area Preview File Tengah */}
           <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
             {pendingPreviewUrl ? (
               <img src={pendingPreviewUrl} alt="Preview" className="max-w-full max-h-full object-contain drop-shadow-2xl" />
@@ -297,7 +320,6 @@ export default function App() {
             )}
           </div>
           
-          {/* Input Caption Bawah */}
           <div className="bg-[#202c33] px-4 py-4 flex items-end gap-3 shrink-0">
             <div className="flex-1 bg-[#2a3942] rounded-xl flex items-center pl-5 pr-2 focus-within:bg-[#2a3942] shadow-inner">
               <textarea 
@@ -323,9 +345,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================================================== */}
-      {/* 2. MODAL PREVIEW FILE UNTUK PESAN YANG SUDAH TERKIRIM */}
-      {/* ==================================================== */}
+      {/* MODAL PREVIEW FILE (PESAN TERKIRIM) */}
       {previewMedia && (
         <div className="fixed inset-0 z-[200] bg-[#0b141a]/95 flex flex-col items-center justify-center p-4">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
@@ -349,7 +369,6 @@ export default function App() {
         </div>
       )}
 
-      {/* SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#222d34] bg-[#111b21] flex-col h-full z-10`}>
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 py-2 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden cursor-pointer">
@@ -366,7 +385,7 @@ export default function App() {
         <div className="p-2 border-b border-[#222d34] bg-[#111b21] shrink-0">
           <div className="bg-[#202c33] flex items-center rounded-lg px-4 py-1.5 border-b-2 border-transparent focus-within:border-[#00a884] transition-colors">
             <Search size={18} className="text-[#8696a0] shrink-0" />
-            <input type="text" placeholder="Cari grup atau obrolan..." className="bg-transparent border-none outline-none ml-5 w-full text-sm text-[#e9edef] placeholder-[#8696a0]" />
+            <input type="text" placeholder="Cari atau mulai obrolan baru" className="bg-transparent border-none outline-none ml-5 w-full text-sm text-[#e9edef] placeholder-[#8696a0]" />
           </div>
         </div>
 
@@ -389,7 +408,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* AREA CHAT KANAN */}
       <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34]">
@@ -458,8 +476,11 @@ export default function App() {
 
                     {isMenuOpen && (
                       <div onClick={(e) => e.stopPropagation()} className={`absolute top-8 ${isMe ? 'right-0' : 'left-5'} bg-[#233138] border border-[#2a3942] shadow-2xl rounded py-2 w-44 z-[100]`}>
-                        <button onClick={() => startSelectionMode(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
-                          <Share2 size={18} /> Teruskan pesan
+                        <button onClick={() => handleForwardToWA(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                          <Share2 size={18} /> Teruskan (Langsung)
+                        </button>
+                        <button onClick={() => startSelectionMode(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3 border-b border-[#2a3942]">
+                          <CheckSquare size={18} /> Pilih banyak pesan
                         </button>
                         {isMe && (
                           <>
@@ -524,7 +545,6 @@ export default function App() {
             <div className="flex gap-1 shrink-0 mb-1">
               <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
               
-              {/* TOMBOL LAMPIRAN DENGAN TRIGGER MENU PREVIEW */}
               <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${editingMessage ? 'opacity-50' : ''}`}>
                 <Paperclip size={24} className="transform -rotate-45" />
