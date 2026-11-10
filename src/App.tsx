@@ -16,6 +16,7 @@ const firebaseConfig = {
   measurementId: "G-9V5ZEQHC98"
 };
 
+
 // 2. TEMPEL KUNCI CLOUDINARY ANDA DI SINI
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // contoh: dxxxyyyzz
 const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // contoh: ml_default
