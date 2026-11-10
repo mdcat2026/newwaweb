@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -24,7 +24,7 @@ const firebaseConfig = {
 // ==========================================
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
 const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
-const ADMIN_EMAIL = 'buyerfood24@gmail.com'; 
+const ADMIN_EMAIL = 'buyerfood24@gmail.com';  
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -53,13 +53,10 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  // FIXED: State Notifikasi Dihapus, diganti dengan state pembacaan lokal
-  const [localReadStatus, setLocalReadStatus] = useState(() => {
-    // Ambil status baca terakhir dari local storage jika ada
-    const saved = localStorage.getItem('nexusReadStatus');
-    return saved ? JSON.parse(saved) : {};
-  });
-  const [unreadCounts, setUnreadCounts] = useState({}); 
+  const [notifications, setNotifications] = useState([]);
+  
+  // FIX: Menggunakan useRef agar notifikasi toast tidak spam tanpa menggunakan state lokal yang merusak badge
+  const lastNotifiedRef = useRef({});
   
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
@@ -100,19 +97,16 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
+  // LISTEN DAFTAR CHAT & HITUNG UNREAD LANGSUNG DARI DATABASE
   useEffect(() => {
     if (!user) return;
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
     const unsub = onSnapshot(qRooms, (snapshot) => {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
       const processedRooms = [];
-      let newUnreadCounts = { ...unreadCounts };
       
       rooms.forEach(room => {
         const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
-        
-        // FIX BUG GHOST ROOM: Ruangan disembunyikan dari penerima sampai ada pesan masuk
         const hasMessages = !!room.lastMessage;
         const isCreator = room.createdBy === user.uid;
         
@@ -128,50 +122,39 @@ export default function App() {
               room.displayName = room.name;
            }
            
-           // FIX UNREAD CALCULATION
-           const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
-           const readTime = localReadStatus[room.id] || 0;
+           // BACA ANGKA UNREAD MURNI DARI FIREBASE
+           room.badgeCount = room.unreadCount?.[user.uid] || 0;
            
-           if (roomTime > readTime && room.lastSenderId !== user.uid) {
-              if (activeGroup?.id !== room.id) {
-                // Gunakan angka unread dari database (jika ada) atau fallback ke 1
-                newUnreadCounts[room.id] = room.unreadCount?.[user.uid] || 1;
-              }
-           } else {
-              newUnreadCounts[room.id] = 0;
+           // TRIGGER NOTIFIKASI TOAST (Hanya jika belum dibuka & pesannya baru)
+           const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
+           if (room.badgeCount > 0 && activeGroup?.id !== room.id && msgTimeStr && msgTimeStr !== lastNotifiedRef.current[room.id]) {
+              showNotification(room.displayName, room.lastMessage);
+              lastNotifiedRef.current[room.id] = msgTimeStr; // Tandai agar tidak spam
            }
 
            processedRooms.push(room);
         }
       });
       
-      setUnreadCounts(newUnreadCounts);
       setChatRooms(processedRooms);
     });
     return () => unsub();
-  }, [user, contacts, localReadStatus]); // dependency pada localReadStatus
+  }, [user, contacts, activeGroup]);
 
+  // RESET UNREAD OTOMATIS SAAT DI DALAM ROOM
   useEffect(() => {
     if (!user || !activeGroup) return;
-    
-    // FIX BUG UNREAD COUNT: Reset dan simpan status baca ke Local Storage
-    if (activeGroup.id) {
-       const now = Date.now();
-       setLocalReadStatus(prev => {
-          const newStatus = {...prev, [activeGroup.id]: now};
-          localStorage.setItem('nexusReadStatus', JSON.stringify(newStatus));
-          return newStatus;
-       });
-       
-       updateDoc(doc(db, 'chatRooms', activeGroup.id), {
-          [`unreadCount.${user.uid}`]: 0
-       }).catch(e => console.log("Gagal reset unread db:", e));
-    }
+
+    // Reset langsung saat room diklik pertama kali
+    updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
 
     const q = query(collection(db, `messages_${activeGroup.id}`), orderBy('timestamp', 'asc'));
     const unsub = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      
+      // AUTO-READ: Setiap ada pesan mengalir masuk & Anda sedang melihat room ini, otomatis kirim sinyal 'Sudah Dibaca' ke database
+      updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
     });
     
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
@@ -193,6 +176,12 @@ export default function App() {
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, [user, activeGroup, modalConfig]);
+
+  const showNotification = (title, body) => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, title, body }]);
+    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
+  };
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { console.error("Error login:", error); }
@@ -241,7 +230,7 @@ export default function App() {
   };
 
   const togglePinMessage = async (msg) => {
-    await updateDoc(doc(db, `messages_${activeGroup.id}`, msg.id), { isPinned: !msg.isPinned });
+    await updateDoc(doc(db, `messages_${activeGroup.id}`, msg.id), { isPinned: !msg.isPinned, pinnedAt: serverTimestamp() });
     setOpenMenuId(null);
   };
 
@@ -258,16 +247,12 @@ export default function App() {
         text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false
       });
       
-      const updateData = {
-         lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), 
-         lastSenderId: user.uid, 
-         lastMessageTime: serverTimestamp()
-      };
+      const updateData = { lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
       
+      // Tambahkan angka +1 ke seluruh database peserta kecuali pengirim
       (activeGroup.participants || []).forEach(pUid => {
          if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
       });
-      
       await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
     }
     setNewMessage('');
@@ -297,9 +282,7 @@ export default function App() {
         });
         
         const updateData = { lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-        (activeGroup.participants || []).forEach(pUid => {
-           if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
-        });
+        (activeGroup.participants || []).forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
         
         setPendingUploadFile(null); setPendingPreviewUrl(null); setUploadCaption('');
@@ -314,7 +297,6 @@ export default function App() {
         const msg = msgArray[0];
         const response = await fetch(msg.fileData);
         const blob = await response.blob();
-        
         const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({ title: msg.fileName, text: msg.text || '', files: [file] });
@@ -323,24 +305,19 @@ export default function App() {
         }
       } catch (error) { console.log("Fallback Share Link"); }
     }
-
     let finalWaText = msgArray.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
       if (m.fileName) return `${header}\n📁 [File]: ${m.fileData}\n${textSegment}`;
       return `${header}\n${textSegment}`;
     }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
-    
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(finalWaText)}`, '_blank');
     setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
   };
 
   const toggleForwardTarget = (target) => {
-    if (forwardTargets.some(t => t.id === target.id)) {
-      setForwardTargets(forwardTargets.filter(t => t.id !== target.id));
-    } else {
-      setForwardTargets([...forwardTargets, target]);
-    }
+    if (forwardTargets.some(t => t.id === target.id)) { setForwardTargets(forwardTargets.filter(t => t.id !== target.id)); } 
+    else { setForwardTargets([...forwardTargets, target]); }
   };
 
   const executeInternalForward = async () => {
@@ -372,23 +349,15 @@ export default function App() {
       
       const targetRoom = chatRooms.find(r => r.id === roomId);
       const updateData = { lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-      if (targetRoom) {
-         (targetRoom.participants || []).forEach(pUid => {
-            if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
-         });
-      }
+      if (targetRoom) { (targetRoom.participants || []).forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); }); }
       await updateDoc(doc(db, 'chatRooms', roomId), updateData);
     }
 
     if (forwardTargets.length === 1) {
        let target = forwardTargets[0];
        let roomToOpen = chatRooms.find(r => r.id === target.id) || chatRooms.find(r => r.type === 'private' && r.participants.includes(target.uid));
-       if (roomToOpen) {
-          setActiveGroup(roomToOpen);
-          setIsMobileChatOpen(true);
-       }
+       if (roomToOpen) { setActiveGroup(roomToOpen); setIsMobileChatOpen(true); }
     }
-    
     setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]); setForwardTargets([]);
   };
 
@@ -397,7 +366,6 @@ export default function App() {
        setActiveGroup(room); setIsMobileChatOpen(true);
     }
     setShowGroupInfo(false); setGlobalSearchResults(null); setSidebarSearch('');
-    
     setTimeout(() => {
       const el = document.getElementById(`msg-${msgId}`);
       if (el) {
@@ -411,7 +379,6 @@ export default function App() {
   const handleGlobalSearch = async (e) => {
     if (e.key === 'Enter') {
       if (!sidebarSearch.trim()) { setGlobalSearchResults(null); return; }
-      
       let results = [];
       for (let room of chatRooms) {
         const q = query(collection(db, `messages_${room.id}`), orderBy('timestamp', 'desc'));
@@ -419,9 +386,7 @@ export default function App() {
         snap.forEach(docSnap => {
           const data = docSnap.data();
           const term = sidebarSearch.toLowerCase();
-          if (data.text?.toLowerCase().includes(term) || data.fileName?.toLowerCase().includes(term)) {
-            results.push({ ...data, id: docSnap.id, room: room });
-          }
+          if (data.text?.toLowerCase().includes(term) || data.fileName?.toLowerCase().includes(term)) { results.push({ ...data, id: docSnap.id, room: room }); }
         });
       }
       setGlobalSearchResults(results);
@@ -482,16 +447,32 @@ export default function App() {
   const filteredRooms = chatRooms.filter(r => r.displayName.toLowerCase().includes(sidebarSearch.toLowerCase()));
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.email.toLowerCase().includes(contactSearch.toLowerCase()));
   const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
-  const pinnedMessages = messages.filter(m => m.isPinned);
+  
+  const pinnedMessages = messages.filter(m => m.isPinned).sort((a, b) => {
+      const timeA = a.pinnedAt?.toMillis() || a.timestamp?.toMillis() || 0;
+      const timeB = b.pinnedAt?.toMillis() || b.timestamp?.toMillis() || 0;
+      return timeB - timeA; 
+  });
+  const [currentPinIndex, setCurrentPinIndex] = useState(0);
+  useEffect(() => { setCurrentPinIndex(0); }, [activeGroup]); 
 
   const forwardContactList = contacts.map(c => ({ id: c.uid, uid: c.uid, name: c.name, photo: c.photo, isContact: true }));
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
-
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
+
+      {/* TOAST NOTIFICATIONS */}
+      <div className="fixed top-5 right-5 z-[1000] flex flex-col gap-2 pointer-events-none">
+        {notifications.map(notif => (
+          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.displayName === notif.title))}>
+             <div className="bg-[#3b82f6]/20 p-2 rounded-lg text-[#3b82f6]"><BellRing size={20}/></div>
+             <div><h4 className="font-bold text-sm text-[#f1f5f9]">{notif.title}</h4><p className="text-xs text-[#94a3b8] mt-1 truncate max-w-[200px]">{notif.body}</p></div>
+          </div>
+        ))}
+      </div>
 
       {/* MODAL FORWARD INTERNAL */}
       {modalConfig.type === 'forward' && (
@@ -538,7 +519,7 @@ export default function App() {
          </div>
       )}
 
-      {/* PREVIEW GAMBAR & DOKUMEN MODAL */}
+      {/* PREVIEW GAMBAR MODAL */}
       {previewMedia && (
         <div className="fixed inset-0 z-[500] bg-[#020617]/95 flex flex-col items-center justify-center p-4 backdrop-blur-md">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/60 to-transparent z-10">
@@ -678,7 +659,7 @@ export default function App() {
                       </button>
                       {showRoomOptions === room.id && (
                         <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]" onClick={e => e.stopPropagation()}>
-                           <button onClick={() => handleDeleteRoom(room.id)} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
+                           <button onClick={(e) => { e.stopPropagation(); handleDeleteRoom(room.id); }} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
                         </div>
                       )}
                     </div>
@@ -724,12 +705,20 @@ export default function App() {
             </div>
 
             {pinnedMessages.length > 0 && (
-              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] cursor-pointer hover:bg-[#334155] transition" onClick={() => jumpToMessage(pinnedMessages[0].id)}>
-                 <Star size={16} className="text-[#eab308]" />
-                 <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan</p>
-                    <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[0].text || pinnedMessages[0].fileName}</p>
+              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] shadow-sm">
+                 <div className="cursor-pointer flex-1 flex items-center gap-3 min-w-0" onClick={() => jumpToMessage(pinnedMessages[currentPinIndex].id)}>
+                    <Star size={16} className="text-[#eab308] shrink-0" />
+                    <div className="flex-1 min-w-0">
+                       <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan {pinnedMessages.length > 1 ? `(${currentPinIndex + 1}/${pinnedMessages.length})` : ''}</p>
+                       <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[currentPinIndex].text || pinnedMessages[currentPinIndex].fileName}</p>
+                    </div>
                  </div>
+                 {pinnedMessages.length > 1 && (
+                    <div className="flex items-center gap-1 shrink-0 bg-[#0f172a] rounded-lg border border-[#334155]">
+                      <button onClick={(e) => { e.stopPropagation(); setCurrentPinIndex(prev => prev === pinnedMessages.length - 1 ? 0 : prev + 1); }} className="p-1 hover:bg-[#334155] rounded-l-lg text-[#94a3b8]"><ChevronLeft size={16}/></button>
+                      <button onClick={(e) => { e.stopPropagation(); setCurrentPinIndex(prev => prev === 0 ? pinnedMessages.length - 1 : prev - 1); }} className="p-1 hover:bg-[#334155] rounded-r-lg text-[#94a3b8]"><ChevronRight size={16}/></button>
+                    </div>
+                 )}
               </div>
             )}
 
@@ -750,28 +739,42 @@ export default function App() {
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto p-4 md:px-12 flex flex-col gap-1.5 relative z-0 pb-4 hide-scroll">
-              {filteredMessages.map((msg) => {
+            <div className="flex-1 overflow-y-auto p-4 md:px-12 flex flex-col relative z-0 pb-4 hide-scroll">
+              {filteredMessages.map((msg, index) => {
                 const isMe = msg.uid === user.uid;
                 const isMenuOpen = openMenuId === msg.id;
                 const isSelected = selectedMessages.includes(msg.id);
+                
+                const prevMsg = index > 0 ? filteredMessages[index - 1] : null;
+                const nextMsg = index < filteredMessages.length - 1 ? filteredMessages[index + 1] : null;
+                const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
+                const isSameSenderAsNext = nextMsg && nextMsg.uid === msg.uid;
+                
+                let bubbleShape = 'rounded-2xl'; 
+                if (!isSameSenderAsNext) { 
+                   bubbleShape = isMe ? 'rounded-2xl rounded-br-sm' : 'rounded-2xl rounded-bl-sm';
+                }
+                const marginTop = isSameSenderAsPrev ? 'mt-1' : 'mt-4'; 
 
                 return (
-                  <div key={msg.id} id={`msg-${msg.id}`} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} mt-1 group rounded-xl`}>
+                  <div key={msg.id} id={`msg-${msg.id}`} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
                     {isSelectionMode && (
                       <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#3b82f6] shrink-0">
                         {isSelected ? <CheckSquare size={18} /> : <Square size={18} className="text-[#475569]" />}
                       </div>
                     )}
                     <div onClick={() => isSelectionMode && toggleSelection(msg.id)} className={`flex flex-col relative max-w-[85%] md:max-w-[70%] ${isSelectionMode ? 'cursor-pointer' : ''}`}>
-                      <div className={`p-2.5 rounded-2xl shadow-sm text-[13.5px] relative leading-relaxed border
-                        ${isMe ? 'bg-[#10b981]/10 border-[#10b981]/20 text-[#f1f5f9] rounded-br-sm' : 'bg-[#1e293b] border-[#334155] text-[#f1f5f9] rounded-bl-sm'}
+                      <div className={`p-2.5 shadow-sm text-[13.5px] relative leading-relaxed border ${bubbleShape}
+                        ${isMe ? 'bg-[#10b981]/10 border-[#10b981]/20 text-[#f1f5f9]' : 'bg-[#1e293b] border-[#334155] text-[#f1f5f9]'}
                         ${isSelected ? 'ring-2 ring-[#3b82f6]' : ''}
-                        ${msg.isPinned ? 'border-[#eab308]/50 shadow-[0_0_10px_rgba(234,179,8,0.2)]' : ''}
+                        ${msg.isPinned ? 'border-[#eab308]/50 shadow-[0_0_10px_rgba(234,179,8,0.15)]' : ''}
                       `}>
                         {msg.isPinned && <div className="absolute -top-2.5 -right-2.5 bg-[#eab308] p-1 rounded-full text-white shadow-md z-10"><Star size={10} fill="currentColor"/></div>}
                         {msg.isForwarded && <div className="text-[10px] text-[#94a3b8] italic mb-1 flex items-center gap-1"><Share2 size={10}/> Diteruskan</div>}
-                        {!isMe && activeGroup.type !== 'private' && <div className="text-[10px] font-bold text-[#3b82f6] mb-1">{msg.senderName}</div>}
+                        
+                        {(!isMe && activeGroup.type !== 'private' && !isSameSenderAsPrev) && (
+                           <div className="text-[10px] font-bold text-[#3b82f6] mb-1">{msg.senderName}</div>
+                        )}
                         
                         {msg.isImage && (
                           <div className="mb-2 relative cursor-pointer group/media" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
@@ -891,11 +894,8 @@ export default function App() {
                     <div className="flex-1 min-w-0 pr-1">
                       <p className="font-medium text-[#f1f5f9] text-[11px] truncate">{m.fileName}</p>
                     </div>
-                    
-                    {/* TOMBOL MATA UNTUK JUMP TO MESSAGE */}
                     <button onClick={() => jumpToMessage(m.id)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#3b82f6]/20 hover:text-[#3b82f6] transition text-[#94a3b8] shrink-0" title="Lihat di Chat"><Eye size={14}/></button>
-                    
-                    <a href={m.fileData} target="_blank" rel="noreferrer" className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Buka File"><Download size={14}/></a>
+                    <button onClick={() => handleForceDownload(m.fileData)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Unduh File"><Download size={14}/></button>
                   </div>
                 ))}
               </div>
