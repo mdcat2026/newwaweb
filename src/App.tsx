@@ -33,11 +33,9 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   
-  // State Menu & Edit
   const [openMenuId, setOpenMenuId] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   
-  // State Preview & Selection (BARU)
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
@@ -59,7 +57,6 @@ export default function App() {
       setMessages(msgs);
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     });
-    // Reset selection saat pindah grup
     setIsSelectionMode(false);
     setSelectedMessages([]);
     return () => unsubscribe();
@@ -121,7 +118,7 @@ export default function App() {
   };
 
   const handleFileProcessing = async (file) => {
-    if (file.size > 800000) { alert("Batas sementara 800KB."); return; }
+    if (file.size > 800000) { alert("Batas sementara 800KB. Segera kita sambungkan ke Cloudinary!"); return; }
     setIsUploading(true);
     const isImage = file.type.startsWith('image/');
     const reader = new FileReader();
@@ -147,7 +144,6 @@ export default function App() {
     return { __html: formatted };
   };
 
-  // --- LOGIKA MULTI-FORWARD (BARU) ---
   const startSelectionMode = (initialMsgId) => {
     setIsSelectionMode(true);
     setSelectedMessages([initialMsgId]);
@@ -170,7 +166,7 @@ export default function App() {
       let textSegment = m.text || '';
       if (m.fileName) textSegment = `*[File: ${m.fileName}]* ${textSegment}`;
       return textSegment;
-    }).join('\n\n---\n\n'); // Pemisah antar pesan
+    }).join('\n\n---\n\n'); 
     
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(finalWaText)}`, '_blank');
     setIsSelectionMode(false);
@@ -194,7 +190,6 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
-      {/* KOTAK PRATINJAU / PREVIEW MODAL (BARU) */}
       {previewMedia && (
         <div className="fixed inset-0 z-[200] bg-[#0b141a]/95 flex flex-col items-center justify-center p-4">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
@@ -208,7 +203,6 @@ export default function App() {
               </button>
             </div>
           </div>
-          
           <div className="w-full h-full flex items-center justify-center pt-16 pb-4">
             {previewMedia.isImage ? (
               <img src={previewMedia.fileData} alt="Preview" className="max-w-full max-h-full object-contain drop-shadow-2xl" />
@@ -219,7 +213,6 @@ export default function App() {
         </div>
       )}
 
-      {/* SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#222d34] bg-[#111b21] flex-col h-full z-10`}>
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 py-2 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden cursor-pointer">
@@ -259,10 +252,8 @@ export default function App() {
         </div>
       </div>
 
-      {/* AREA CHAT KANAN */}
       <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
-        {/* Header Chat Kanan */}
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34]">
           <div className="flex items-center">
             <button onClick={() => setIsMobileChatOpen(false)} className="md:hidden mr-3 text-[#aebac1] p-1"><ArrowLeft size={24} /></button>
@@ -280,7 +271,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Ruang Pesan */}
         <div className="flex-1 overflow-y-auto p-4 md:px-16 lg:px-24 flex flex-col gap-1 relative z-0 pb-4">
           {messages.map((msg, index) => {
             const isMe = msg.uid === user.uid;
@@ -294,7 +284,6 @@ export default function App() {
             return (
               <div key={msg.id} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
                 
-                {/* Kotak Centang Mode Pilih (Kiri Pesan) */}
                 {isSelectionMode && (
                   <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] shrink-0">
                     {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-[#8696a0]" />}
@@ -305,14 +294,19 @@ export default function App() {
                   onClick={() => isSelectionMode && toggleSelection(msg.id)}
                   className={`flex flex-col relative max-w-[85%] md:max-w-[70%] lg:max-w-[65%] ${isSelectionMode ? 'cursor-pointer' : ''}`}
                 >
-                  {(!isMe && !isSameSenderAsPrev) && <span className="text-[12px] font-medium text-[#eeb056] ml-2 mb-1">{msg.senderName}</span>}
-                  
                   <div className={`p-1.5 px-2.5 rounded-lg shadow-sm text-[15px] relative break-words leading-[1.3] transition-colors
                     ${isMe ? 'bg-[#005c4b] text-[#e9edef]' : 'bg-[#202c33] text-[#e9edef]'}
                     ${!isSameSenderAsPrev ? (isMe ? 'rounded-tr-none' : 'rounded-tl-none') : ''}
                     ${isSelected ? 'opacity-75 ring-2 ring-[#00a884]' : ''}
                   `}>
                     
+                    {/* NAMA PENGIRIM PINDAH KE DALAM BUBBLE CHAT */}
+                    {(!isMe && !isSameSenderAsPrev) && (
+                      <div className="text-[12.5px] font-semibold text-[#53bdeb] mb-1">
+                        {msg.senderName}
+                      </div>
+                    )}
+
                     {!isSelectionMode && (
                       <div 
                         onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : msg.id); }}
@@ -343,22 +337,14 @@ export default function App() {
                       </div>
                     )}
                     
-                    {/* Gambar dengan fitur PREVIEW */}
                     {msg.isImage && (
-                      <div 
-                        className="relative mt-0.5 mx-0.5 cursor-pointer"
-                        onClick={() => !isSelectionMode && setPreviewMedia(msg)}
-                      >
+                      <div className="relative mt-0.5 mx-0.5 cursor-pointer" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
                         <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[320px] rounded mb-1 object-cover hover:opacity-95 transition" />
                       </div>
                     )}
 
-                    {/* File dengan fitur PREVIEW */}
                     {!msg.isImage && msg.fileData && (
-                      <div 
-                        className="flex items-center gap-3 bg-[#1e2a30] p-3 rounded mb-1 mt-1 border border-[#2a3942] cursor-pointer hover:bg-[#233138] transition"
-                        onClick={() => !isSelectionMode && setPreviewMedia(msg)}
-                      >
+                      <div className="flex items-center gap-3 bg-[#1e2a30] p-3 rounded mb-1 mt-1 border border-[#2a3942] cursor-pointer hover:bg-[#233138] transition" onClick={() => !isSelectionMode && setPreviewMedia(msg)}>
                         <div className="p-2 bg-[#ff8f6e] rounded text-white shrink-0"><FileText size={20} /></div>
                         <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm text-[#e9edef]">{msg.fileName}</p></div>
                       </div>
@@ -383,7 +369,6 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Bawah: Menu Aksi Multi-Forward ATAU Form Ketik Pesan */}
         {isSelectionMode ? (
           <div className="bg-[#202c33] px-4 py-3 flex justify-between items-center z-10 shadow-lg border-t border-[#222d34]">
             <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="text-[#00a884] font-medium p-2 hover:bg-[#2a3942] rounded-lg transition">
@@ -400,26 +385,16 @@ export default function App() {
         ) : (
           <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10">
             <div className="flex gap-1 shrink-0 mb-1">
-              <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full">
-                <Smile size={26} />
-              </button>
+              <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
               <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading || editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${(isUploading || editingMessage) ? 'opacity-50' : ''}`}>
                 {isUploading ? <div className="w-6 h-6 border-2 border-[#8696a0] border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={24} className="transform -rotate-45" />}
               </button>
             </div>
-            
             <div className="flex-1 bg-[#2a3942] rounded-lg mb-1 flex items-center pl-4 pr-1">
-              <textarea 
-                ref={textareaRef} value={newMessage} onChange={handleInputResize} onKeyDown={handleKeyDown} rows={1}
-                placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"}
-                className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]"
-              />
+              <textarea ref={textareaRef} value={newMessage} onChange={handleInputResize} onKeyDown={handleKeyDown} rows={1} placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"} className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]" />
             </div>
-            
-            <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors">
-              <Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} />
-            </button>
+            <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors"><Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} /></button>
           </form>
         )}
       </div>
