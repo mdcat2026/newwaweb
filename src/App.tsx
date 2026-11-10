@@ -22,7 +22,7 @@ const firebaseConfig = {
 // 2. TEMPEL KUNCI CLOUDINARY ANDA DI BAWAH INI
 // ==========================================
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
-const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
+const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb';  
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
