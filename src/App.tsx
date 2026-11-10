@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, where } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquarePlus, Edit3, Camera } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquarePlus, MessageSquare, Edit3, Camera } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI BAWAH INI
