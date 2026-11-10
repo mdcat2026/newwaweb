@@ -225,7 +225,7 @@ export default function App() {
     }
   };
 
-  // --- LOGIKA FORWARD SATUAN DIPERBAIKI (MENYERTAKAN LINK CLOUDINARY) ---
+  //  --- LOGIKA FORWARD SATUAN DIPERBAIKI (MENYERTAKAN LINK CLOUDINARY) ---
   const handleForwardToWA = async (msg) => {
     // 1. Coba gunakan fitur "Share Bawaan HP" jika ada file dan dibuka di HP
     if (msg.fileData && navigator.canShare) {
