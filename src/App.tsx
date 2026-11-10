@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, MoreVertical, MessageSquare } from 'lucide-react';
 
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
 const firebaseConfig = {
@@ -168,13 +168,14 @@ export default function App() {
     setOpenMenuId(null);
   };
 
+  // --- HALAMAN LOGIN ---
   if (!user) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#f0f2f5]">
-        <div className="bg-white p-10 rounded-xl shadow-xl text-center max-w-sm w-full mx-4">
+      <div className="flex h-screen items-center justify-center bg-[#111b21]">
+        <div className="bg-[#202c33] p-10 rounded-xl shadow-2xl text-center max-w-sm w-full mx-4 border border-[#2a3942]">
           <h1 className="text-3xl font-bold text-[#00a884] mb-2">Web Chat</h1>
-          <p className="mb-8 text-gray-500">Silakan login untuk masuk ke grup.</p>
-          <button onClick={handleLogin} className="w-full bg-[#00a884] text-white py-3 rounded-lg hover:bg-[#008f6f] transition font-semibold shadow-md">
+          <p className="mb-8 text-[#8696a0]">Silakan login untuk masuk ke grup.</p>
+          <button onClick={handleLogin} className="w-full bg-[#00a884] text-[#111b21] py-3 rounded-lg hover:bg-[#008f6f] transition font-bold shadow-md">
             Login dengan Google
           </button>
         </div>
@@ -182,126 +183,164 @@ export default function App() {
     );
   }
 
+  // --- HALAMAN CHAT UTAMA (DARK MODE) ---
   return (
-    <div className="flex h-[100dvh] bg-[#f0f2f5] font-sans overflow-hidden" onClick={() => setOpenMenuId(null)}>
+    <div className="flex h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
-      {/* SIDEBAR GRUP */}
-      <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-gray-300 bg-white flex-col h-full z-10`}>
-        <div className="bg-[#f0f2f5] h-16 flex items-center justify-between px-4 py-2 border-b shrink-0">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full shrink-0 shadow-sm" />
-            <span className="font-semibold text-gray-700 truncate">{user.displayName}</span>
+      {/* SIDEBAR KIRI */}
+      <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#222d34] bg-[#111b21] flex-col h-full z-10`}>
+        
+        {/* Header Profil */}
+        <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 py-2 shrink-0">
+          <div className="flex items-center gap-3 overflow-hidden cursor-pointer">
+            <img src={user.photoURL} alt="Profil" className="w-10 h-10 rounded-full shrink-0" />
+            <span className="font-semibold text-[#e9edef] truncate">{user.displayName}</span>
           </div>
-          <button onClick={() => signOut(auth)} className="text-gray-500 hover:text-red-500 ml-2 shrink-0 p-2 rounded-full hover:bg-gray-200 transition">
-            <LogOut size={20} />
-          </button>
+          <div className="flex items-center gap-3 text-[#aebac1]">
+            <MessageSquare size={20} className="cursor-pointer hover:text-[#e9edef]" />
+            <MoreVertical size={20} className="cursor-pointer hover:text-[#e9edef]" />
+            <button onClick={() => signOut(auth)} title="Logout" className="hover:text-red-400 ml-1">
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
         
-        <div className="p-3 border-b bg-white shrink-0">
-          <div className="bg-[#f0f2f5] flex items-center rounded-lg px-4 py-2">
-            <Search size={18} className="text-gray-500 shrink-0" />
-            <input type="text" placeholder="Cari grup..." className="bg-transparent border-none outline-none ml-3 w-full text-sm" />
+        {/* Bar Pencarian */}
+        <div className="p-2 border-b border-[#222d34] bg-[#111b21] shrink-0">
+          <div className="bg-[#202c33] flex items-center rounded-lg px-4 py-1.5 border-b-2 border-transparent focus-within:border-[#00a884] transition-colors">
+            <Search size={18} className="text-[#8696a0] shrink-0" />
+            <input type="text" placeholder="Cari atau mulai obrolan baru" className="bg-transparent border-none outline-none ml-5 w-full text-sm text-[#e9edef] placeholder-[#8696a0]" />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-white">
+        {/* Daftar Grup */}
+        <div className="flex-1 overflow-y-auto bg-[#111b21]">
           {GROUPS.map(group => (
             <div 
               key={group.id} 
               onClick={() => { setActiveGroup(group); setIsMobileChatOpen(true); }}
-              className={`flex items-center px-4 py-3 cursor-pointer hover:bg-[#f5f6f6] transition ${activeGroup.id === group.id ? 'bg-[#f0f2f5]' : ''}`}
+              className={`flex items-center px-3 py-3 cursor-pointer hover:bg-[#202c33] transition ${activeGroup.id === group.id ? 'bg-[#2a3942]' : ''}`}
             >
-              <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full mr-3 shrink-0 border border-gray-200" />
-              <div className="flex-1 border-b border-gray-100 pb-3 truncate pt-1">
-                <h3 className="font-medium text-gray-900 truncate text-base">{group.name}</h3>
+              <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full mr-4 shrink-0" />
+              <div className="flex-1 border-b border-[#222d34] pb-4 truncate pt-1">
+                <div className="flex justify-between items-center mb-1">
+                  <h3 className="font-medium text-[#e9edef] truncate text-[17px]">{group.name}</h3>
+                  {/* Waktu dummy untuk estetika UI */}
+                  <span className="text-xs text-[#8696a0]">13:45</span>
+                </div>
+                <p className="text-sm text-[#8696a0] truncate">Ketuk untuk melihat pesan...</p>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* AREA CHAT */}
-      <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#efeae2] relative`} style={{ backgroundImage: "url('https://web.whatsapp.com/img/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')", opacity: 0.95 }}>
+      {/* AREA CHAT KANAN */}
+      <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
-        <div className="bg-[#f0f2f5] h-16 flex items-center px-4 border-b shrink-0 z-10 shadow-sm">
-          <button onClick={() => setIsMobileChatOpen(false)} className="md:hidden mr-3 text-gray-600 hover:text-gray-800 p-2 rounded-full hover:bg-gray-200">
-            <ArrowLeft size={24} />
-          </button>
-          <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-3 shrink-0" />
-          <h2 className="font-medium text-gray-800 truncate text-lg">{activeGroup.name}</h2>
+        {/* Header Chat Kanan */}
+        <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34]">
+          <div className="flex items-center">
+            <button onClick={() => setIsMobileChatOpen(false)} className="md:hidden mr-3 text-[#aebac1] p-1">
+              <ArrowLeft size={24} />
+            </button>
+            <img src={activeGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full mr-4 shrink-0 cursor-pointer" />
+            <div>
+              <h2 className="font-medium text-[#e9edef] truncate text-[16px]">{activeGroup.name}</h2>
+              <p className="text-xs text-[#8696a0] truncate">klik di sini untuk info grup</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-5 text-[#aebac1]">
+            <Search size={20} className="cursor-pointer hover:text-[#e9edef]" />
+            <MoreVertical size={20} className="cursor-pointer hover:text-[#e9edef]" />
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:px-10 flex flex-col gap-3 relative z-0">
-          {messages.map((msg) => {
+        {/* Ruang Pesan */}
+        <div className="flex-1 overflow-y-auto p-4 md:px-16 lg:px-24 flex flex-col gap-1 relative z-0 pb-4">
+          {messages.map((msg, index) => {
             const isMe = msg.uid === user.uid;
             const isMenuOpen = openMenuId === msg.id;
+            
+            // Logika untuk merapatkan pesan dari pengirim yang sama
+            const prevMsg = index > 0 ? messages[index - 1] : null;
+            const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
+            const marginTop = isSameSenderAsPrev ? 'mt-0' : 'mt-3';
 
             return (
-              <div key={msg.id} className={`flex flex-col relative group max-w-[85%] md:max-w-[75%] lg:max-w-[60%] ${isMe ? 'self-end' : 'self-start'}`}>
-                {!isMe && <span className="text-[11px] font-medium text-gray-500 ml-2 mb-1">{msg.senderName}</span>}
-                <div className={`p-2 px-3 rounded-lg shadow text-[15px] relative break-words leading-relaxed ${isMe ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
+              <div key={msg.id} className={`flex flex-col relative group max-w-[85%] md:max-w-[70%] lg:max-w-[65%] ${marginTop} ${isMe ? 'self-end' : 'self-start'}`}>
+                
+                {(!isMe && !isSameSenderAsPrev) && <span className="text-[12px] font-medium text-[#eeb056] ml-2 mb-1">{msg.senderName}</span>}
+                
+                {/* Balon Chat */}
+                <div className={`p-1.5 px-2.5 rounded-lg shadow-sm text-[15px] relative break-words leading-[1.3] 
+                  ${isMe ? 'bg-[#005c4b] text-[#e9edef]' : 'bg-[#202c33] text-[#e9edef]'}
+                  ${!isSameSenderAsPrev ? (isMe ? 'rounded-tr-none' : 'rounded-tl-none') : ''}
+                `}>
                   
-                  {/* TOMBOL MENU DROPDOWN (DIPERBAIKI) */}
+                  {/* Panah Dropdown */}
                   <div 
                     onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : msg.id); }}
-                    className={`absolute top-0 right-0 cursor-pointer p-1 rounded-bl-lg rounded-tr-lg z-20 transition-opacity shadow-sm
-                      ${isMe ? 'bg-[#d9fdd3] hover:bg-[#cbf0c4]' : 'bg-white hover:bg-gray-50'}
-                      md:opacity-0 md:group-hover:opacity-100 ${isMenuOpen ? 'opacity-100' : 'opacity-60'}
+                    className={`absolute top-1 right-1 cursor-pointer p-1 rounded-bl-lg rounded-tr-lg z-20 transition-opacity
+                      ${isMe ? 'bg-gradient-to-l from-[#005c4b] via-[#005c4b]' : 'bg-gradient-to-l from-[#202c33] via-[#202c33]'}
+                      md:opacity-0 md:group-hover:opacity-100 ${isMenuOpen ? 'opacity-100' : ''} to-transparent
                     `}
                   >
-                    <ChevronDown size={18} className="text-gray-500" />
+                    <ChevronDown size={22} className="text-[#8696a0]" />
                   </div>
 
-                  {/* KOTAK MENU DROPDOWN */}
+                  {/* Menu Dropdown Popup */}
                   {isMenuOpen && (
-                    <div 
-                      onClick={(e) => e.stopPropagation()} 
-                      className={`absolute top-8 ${isMe ? 'right-0' : 'left-8'} bg-white border border-gray-200 shadow-xl rounded-lg py-1 w-40 z-[100]`}
-                    >
-                      <button onClick={() => handleForwardToWA(msg)} className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                        <Share2 size={16} /> Teruskan (WA)
+                    <div onClick={(e) => e.stopPropagation()} className={`absolute top-8 ${isMe ? 'right-0' : 'left-5'} bg-[#233138] border border-[#2a3942] shadow-2xl rounded py-2 w-44 z-[100]`}>
+                      <button onClick={() => handleForwardToWA(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                        <Share2 size={18} /> Teruskan (WA)
                       </button>
                       {isMe && (
                         <>
-                          <button onClick={() => startEditing(msg)} className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                            <Edit2 size={16} /> Edit Pesan
+                          <button onClick={() => startEditing(msg)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                            <Edit2 size={18} /> Edit pesan
                           </button>
-                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-gray-100 flex items-center gap-2">
-                            <Trash2 size={16} /> Hapus
+                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-5 py-2.5 text-[14.5px] text-[#d1d7db] hover:bg-[#182229] transition-colors flex items-center gap-3">
+                            <Trash2 size={18} /> Hapus pesan
                           </button>
                         </>
                       )}
                     </div>
                   )}
                   
+                  {/* File / Gambar */}
                   {msg.isImage && (
-                    <div className="relative group/img mt-1">
-                      <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[300px] rounded mb-1 object-cover" />
-                      <a href={msg.fileData} download={msg.fileName} className="absolute bottom-2 right-2 p-2 bg-black/60 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition shadow-lg hover:bg-black/80">
+                    <div className="relative group/img mt-0.5 mx-0.5">
+                      <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[320px] rounded mb-1 object-cover" />
+                      <a href={msg.fileData} download={msg.fileName} className="absolute bottom-2 right-2 p-2 bg-black/60 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition shadow-lg hover:bg-[#00a884]">
                         <Download size={18} />
                       </a>
                     </div>
                   )}
-                  
                   {!msg.isImage && msg.fileData && (
-                    <div className="flex items-center gap-3 bg-black/5 p-3 rounded mb-1 mt-1 text-gray-800 border border-black/10">
-                      <FileText size={24} className="text-[#00a884] shrink-0" />
-                      <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{msg.fileName}</p></div>
-                      <a href={msg.fileData} download={msg.fileName} className="p-2 bg-white rounded-full shadow hover:bg-gray-100 shrink-0">
-                        <Download size={18} className="text-gray-600" />
+                    <div className="flex items-center gap-3 bg-[#1e2a30] p-3 rounded mb-1 mt-1 border border-[#2a3942]">
+                      <div className="p-2 bg-[#ff8f6e] rounded text-white shrink-0"><FileText size={20} /></div>
+                      <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm text-[#e9edef]">{msg.fileName}</p></div>
+                      <a href={msg.fileData} download={msg.fileName} className="p-2 bg-transparent hover:bg-[#2a3942] rounded-full transition-colors shrink-0">
+                        <Download size={20} className="text-[#aebac1]" />
                       </a>
                     </div>
                   )}
                   
-                  {msg.text && <div dangerouslySetInnerHTML={formatText(msg.text)} className="mt-1 pr-6" />}
+                  {/* Teks Pesan */}
+                  {msg.text && (
+                    <div dangerouslySetInnerHTML={formatText(msg.text)} className={`mt-0.5 px-1 ${msg.text.length < 10 && !msg.isImage ? 'pr-12' : 'pr-3'} text-[14.2px]`} />
+                  )}
                   
-                  <div className="flex items-center justify-end gap-1 mt-1">
-                    {msg.isEdited && <span className="text-[10px] text-gray-400 italic mr-1">(diedit)</span>}
-                    <span className="text-[10px] text-gray-400">
-                      {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'}
+                  {/* Waktu & Centang */}
+                  <div className={`flex items-center justify-end gap-1 ${msg.text && msg.text.length < 10 && !msg.isImage ? 'absolute bottom-1 right-2' : 'mt-1 mr-1 float-right'}`}>
+                    {msg.isEdited && <span className="text-[11px] text-[#8696a0] italic mr-1 text-opacity-80">diedit</span>}
+                    <span className="text-[11px] text-[#8696a0] text-opacity-90">
+                      {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}
                     </span>
-                    {isMe && <CheckCheck size={15} className="text-[#53bdeb]" />}
+                    {isMe && <CheckCheck size={16} className="text-[#53bdeb]" />}
                   </div>
+                  
                 </div>
               </div>
             );
@@ -309,39 +348,46 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Indikator Edit */}
         {editingMessage && (
-          <div className="bg-[#f0f2f5] px-4 py-2 border-t flex justify-between items-center text-sm z-10 shadow-sm">
+          <div className="bg-[#202c33] px-5 py-2.5 border-l-4 border-[#00a884] flex justify-between items-center text-sm z-10 shadow-md">
             <div>
-              <span className="font-semibold text-[#00a884]">Mengedit pesan</span>
-              <p className="text-gray-500 truncate max-w-xs">{editingMessage.text}</p>
+              <span className="font-semibold text-[#00a884]">Edit pesan</span>
+              <p className="text-[#8696a0] truncate max-w-sm mt-0.5">{editingMessage.text}</p>
             </div>
-            <button onClick={cancelEditing} className="text-gray-500 hover:text-gray-800 p-2">
-              <X size={20} />
+            <button onClick={cancelEditing} className="text-[#8696a0] hover:text-[#e9edef] p-1">
+              <X size={24} />
             </button>
           </div>
         )}
 
-        <form onSubmit={handleSendMessage} className="bg-[#f0f2f5] p-2 md:p-3 flex items-end gap-2 shrink-0 z-10 border-t">
-          <button type="button" onClick={() => alert("Di PC: Tekan tombol [Windows] + [.] \nDi HP: Gunakan tombol Emoji bawaan")} className="text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1">
-            <Smile size={26} />
-          </button>
-          <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading || editingMessage} className={`text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1 ${(isUploading || editingMessage) ? 'opacity-50' : ''}`}>
-            {isUploading ? <div className="w-6 h-6 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={26} />}
-          </button>
+        {/* Form Input Bawah */}
+        <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10">
           
-          <textarea 
-            ref={textareaRef}
-            value={newMessage}
-            onChange={handleInputResize}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            placeholder={editingMessage ? "Edit pesan Anda..." : "Ketik pesan..."}
-            className="flex-1 py-3 px-4 rounded-xl bg-white border-none outline-none focus:ring-1 focus:ring-gray-300 min-w-0 resize-none overflow-y-auto mb-1 text-[15px]"
-          />
+          <div className="flex gap-1 shrink-0 mb-1">
+            <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full">
+              <Smile size={26} />
+            </button>
+            <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading || editingMessage} className={`text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full ${(isUploading || editingMessage) ? 'opacity-50' : ''}`}>
+              {isUploading ? <div className="w-6 h-6 border-2 border-[#8696a0] border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={24} className="transform -rotate-45" />}
+            </button>
+          </div>
           
-          <button type="submit" disabled={!newMessage.trim()} className="text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1">
-            <Send size={26} className={newMessage.trim() ? "text-[#00a884]" : ""} />
+          <div className="flex-1 bg-[#2a3942] rounded-lg mb-1 flex items-center pl-4 pr-1 focus-within:bg-[#2a3942]">
+            <textarea 
+              ref={textareaRef}
+              value={newMessage}
+              onChange={handleInputResize}
+              onKeyDown={handleKeyDown}
+              rows={1}
+              placeholder={editingMessage ? "Edit pesan Anda" : "Ketik pesan"}
+              className="flex-1 py-2.5 bg-transparent border-none outline-none resize-none overflow-y-auto text-[#e9edef] placeholder-[#8696a0] text-[15px]"
+            />
+          </div>
+          
+          <button type="submit" disabled={!newMessage.trim()} className="text-[#8696a0] hover:text-[#00a884] p-3 shrink-0 mb-0.5 rounded-full transition-colors">
+            <Send size={24} className={newMessage.trim() ? "text-[#00a884]" : ""} />
           </button>
         </form>
       </div>
