@@ -16,6 +16,10 @@ const firebaseConfig = {
   measurementId: "G-9V5ZEQHC98"
 };
 
+// 2. TEMPEL KUNCI CLOUDINARY ANDA DI SINI
+const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; // contoh: dxxxyyyzz
+const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; // contoh: ml_default
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -117,21 +121,49 @@ export default function App() {
     }
   };
 
+  // --- UPLOAD MENGGUNAKAN CLOUDINARY & TEKS CAPTION ---
   const handleFileProcessing = async (file) => {
-    if (file.size > 800000) { alert("Batas sementara 800KB. Segera kita sambungkan ke Cloudinary!"); return; }
+    const caption = window.prompt("Ketik teks untuk file ini (kosongkan jika tidak perlu):", "");
+    if (caption === null) return; // Batal jika klik Cancel
+
+    if (CLOUDINARY_CLOUD_NAME === 'GANTI_DENGAN_CLOUD_NAME_ANDA') {
+      alert("Harap masukkan pengaturan Cloudinary di dalam kode terlebih dahulu!");
+      return;
+    }
+
     setIsUploading(true);
     const isImage = file.type.startsWith('image/');
-    const reader = new FileReader();
     
-    reader.onloadend = async () => {
-      try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+
+    try {
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await response.json();
+
+      if (data.secure_url) {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
-          text: '', fileData: reader.result, fileName: file.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp()
+          text: caption || '', 
+          fileData: data.secure_url, 
+          fileName: file.name || 'Lampiran', 
+          isImage: isImage, 
+          uid: user.uid, 
+          senderName: user.displayName, 
+          senderAvatar: user.photoURL, 
+          timestamp: serverTimestamp()
         });
-      } catch (error) { alert("Gagal mengirim file."); }
-      setIsUploading(false);
-    };
-    reader.readAsDataURL(file);
+      } else {
+        throw new Error("Upload gagal");
+      }
+    } catch (error) {
+      console.error("Cloudinary error:", error);
+      alert("Gagal mengunggah file ke Cloudinary.");
+    }
+    setIsUploading(false);
   };
 
   const formatText = (text) => {
@@ -160,13 +192,18 @@ export default function App() {
     }
   };
 
+  // --- FORMAT FORWARD WHATSAPP DIPERBAIKI ---
   const executeMultiForward = () => {
     const msgsToForward = messages.filter(m => selectedMessages.includes(m.id));
-    let finalWaText = msgsToForward.map(m => {
+    
+    let finalWaText = msgsToForward.map((m) => {
       let textSegment = m.text || '';
-      if (m.fileName) textSegment = `*[File: ${m.fileName}]* ${textSegment}`;
-      return textSegment;
-    }).join('\n\n---\n\n'); 
+      let header = `Pesan dari *${m.senderName}*:`;
+      if (m.fileName) {
+          return `${header}\n📁 [File: ${m.fileName}]\n${textSegment}`;
+      }
+      return `${header}\n${textSegment}`;
+    }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
     
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(finalWaText)}`, '_blank');
     setIsSelectionMode(false);
@@ -190,12 +227,13 @@ export default function App() {
   return (
     <div className="flex w-full h-[100dvh] bg-[#111b21] font-sans overflow-hidden text-[#e9edef]" onClick={() => setOpenMenuId(null)}>
       
+      {/* KOTAK PRATINJAU / PREVIEW MODAL */}
       {previewMedia && (
         <div className="fixed inset-0 z-[200] bg-[#0b141a]/95 flex flex-col items-center justify-center p-4">
           <div className="absolute top-0 w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
             <span className="text-[#e9edef] font-medium truncate max-w-[70%]">{previewMedia.fileName}</span>
             <div className="flex items-center gap-4">
-              <a href={previewMedia.fileData} download={previewMedia.fileName} className="text-[#e9edef] hover:text-[#00a884] transition p-2">
+              <a href={previewMedia.fileData} download={previewMedia.fileName} target="_blank" rel="noopener noreferrer" className="text-[#e9edef] hover:text-[#00a884] transition p-2">
                 <Download size={26} />
               </a>
               <button onClick={() => setPreviewMedia(null)} className="text-[#e9edef] hover:text-red-500 transition p-2">
@@ -213,6 +251,7 @@ export default function App() {
         </div>
       )}
 
+      {/* SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#222d34] bg-[#111b21] flex-col h-full z-10`}>
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 py-2 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden cursor-pointer">
@@ -252,6 +291,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* AREA CHAT KANAN */}
       <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#0b141a] relative`} style={{ backgroundImage: "url('https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_DckOUM5a.png')", opacity: 1, backgroundRepeat: 'repeat', backgroundSize: '400px' }}>
         
         <div className="bg-[#202c33] h-16 flex items-center justify-between px-4 shrink-0 z-10 shadow-sm border-l border-[#222d34]">
@@ -284,9 +324,10 @@ export default function App() {
             return (
               <div key={msg.id} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
                 
+                {/* CHECKBOX DIPERBAIKI (Ada background putih) */}
                 {isSelectionMode && (
-                  <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] shrink-0">
-                    {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-[#8696a0]" />}
+                  <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#00a884] bg-white rounded flex items-center justify-center shrink-0 shadow-sm">
+                    {isSelected ? <CheckSquare size={24} /> : <Square size={24} className="text-gray-400" />}
                   </div>
                 )}
 
@@ -300,7 +341,6 @@ export default function App() {
                     ${isSelected ? 'opacity-75 ring-2 ring-[#00a884]' : ''}
                   `}>
                     
-                    {/* NAMA PENGIRIM PINDAH KE DALAM BUBBLE CHAT */}
                     {(!isMe && !isSameSenderAsPrev) && (
                       <div className="text-[12.5px] font-semibold text-[#53bdeb] mb-1">
                         {msg.senderName}
@@ -383,7 +423,7 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10">
+          <form onSubmit={handleSendMessage} className="bg-[#202c33] px-4 py-2.5 flex items-end gap-3 shrink-0 z-10 border-t border-[#222d34]">
             <div className="flex gap-1 shrink-0 mb-1">
               <button type="button" onClick={() => alert("Gunakan emoji bawaan HP/PC Anda")} className="text-[#8696a0] hover:text-[#e9edef] p-2 transition-colors rounded-full"><Smile size={26} /></button>
               <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
