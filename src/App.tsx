@@ -3,10 +3,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, Smile, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, BellRing, Smartphone } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, BellRing, Smartphone, Star } from 'lucide-react';
 
 // ==========================================
-// 1. TEMPEL FIREBASE CONFIG ANDA DI BAWAH INI
+// 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
 // ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyDL0S4x9EXO5GCXORMHAzwdSRnFAKqcSpc",
@@ -50,14 +50,15 @@ export default function App() {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [showFabMenu, setShowFabMenu] = useState(false);
-  const [showRoomOptions, setShowRoomOptions] = useState(null); // Menyimpan ID room yang opsinya dibuka
+  const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
   const [notifications, setNotifications] = useState([]);
   const [localReadStatus, setLocalReadStatus] = useState({});
-  const [unreadCounts, setUnreadCounts] = useState({}); // State khusus untuk lencana jumlah pesan
+  const [unreadCounts, setUnreadCounts] = useState({}); 
   
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
+  const [forwardTargets, setForwardTargets] = useState([]); // Array untuk multi-forward
   
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -103,24 +104,36 @@ export default function App() {
       
       let newUnreadCounts = { ...unreadCounts };
       
-      filtered.forEach(room => {
+      const processedRooms = filtered.map(room => {
+        // FIX BUG: NAMA DIRI SENDIRI DI JAPRI
+        if (room.type === 'private') {
+           const otherParticipantUid = room.participants.find(uid => uid !== user.uid);
+           const otherParticipantName = room.participantNames?.[room.participants.indexOf(otherParticipantUid)];
+           const otherParticipantPhoto = contacts.find(c => c.uid === otherParticipantUid)?.photo || 'https://api.dicebear.com/7.x/initials/svg?seed=user';
+           room.displayAvatar = otherParticipantPhoto;
+           room.displayName = otherParticipantName || 'Pengguna';
+        } else {
+           room.displayAvatar = room.avatar;
+           room.displayName = room.name;
+        }
+
         const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
         const readTime = localReadStatus[room.id] || 0;
         
         if (roomTime > readTime && room.lastSenderId !== user.uid) {
            if (activeGroup?.id !== room.id) {
-             showNotification(room.name, room.lastMessage);
-             // Menambah counter jika ada pesan baru yang masuk
+             showNotification(room.displayName, room.lastMessage);
              newUnreadCounts[room.id] = (newUnreadCounts[room.id] || 0) + 1; 
            }
         }
+        return room;
       });
       
       setUnreadCounts(newUnreadCounts);
-      setChatRooms(filtered);
+      setChatRooms(processedRooms);
     });
     return () => unsub();
-  }, [user, activeGroup, localReadStatus]);
+  }, [user, activeGroup, localReadStatus, contacts]);
 
   useEffect(() => {
     if (!user || !activeGroup) return;
@@ -131,7 +144,7 @@ export default function App() {
       
       if(activeGroup) {
          setLocalReadStatus(prev => ({...prev, [activeGroup.id]: Date.now()}));
-         setUnreadCounts(prev => ({...prev, [activeGroup.id]: 0})); // Reset counter saat ruangan dibuka
+         setUnreadCounts(prev => ({...prev, [activeGroup.id]: 0})); 
       }
     });
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
@@ -170,42 +183,31 @@ export default function App() {
       name: newGroupName, type: 'group', avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`,
       createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: [] 
     });
-    setActiveGroup({ id: newRoom.id, name: newGroupName, type: 'group' });
+    // Set activeGroup dengan properti display yang benar
+    setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: newRoom.avatar, displayAvatar: newRoom.avatar, type: 'group' });
     setModalConfig({ type: null }); setNewGroupName(''); setIsMobileChatOpen(true);
   };
 
   const submitNewJapri = async (targetUser) => {
-    // FIX BUG DUPLIKASI JAPRI: Cocokkan ID peserta secara independen urutannya
-    const existingRoom = chatRooms.find(r => 
-      r.type === 'private' && 
-      r.participants.includes(user.uid) && 
-      r.participants.includes(targetUser.uid)
-    );
-
+    const existingRoom = chatRooms.find(r => r.type === 'private' && r.participants.includes(user.uid) && r.participants.includes(targetUser.uid));
     if (existingRoom) { 
        setActiveGroup(existingRoom); 
     } else {
       const newRoom = await addDoc(collection(db, 'chatRooms'), {
-        name: `Chat: ${targetUser.name}`, type: 'private', avatar: targetUser.photo,
+        name: `Private`, type: 'private',
         createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
-        participants: [user.uid, targetUser.uid], // Menggunakan UID, bukan Email
+        participants: [user.uid, targetUser.uid], 
         participantNames: [user.displayName, targetUser.name]
       });
-      setActiveGroup({ id: newRoom.id, name: targetUser.name, type: 'private', avatar: targetUser.photo });
+      setActiveGroup({ id: newRoom.id, name: 'Private', displayName: targetUser.name, avatar: targetUser.photo, displayAvatar: targetUser.photo, type: 'private' });
     }
     setModalConfig({ type: null }); setIsMobileChatOpen(true);
   };
 
   const handleDeleteRoom = async (roomId) => {
     if (window.confirm("Hapus seluruh ruangan obrolan ini permanen?")) {
-      // Hapus dokumen di koleksi chatRooms
       await deleteDoc(doc(db, 'chatRooms', roomId));
-      
-      // Jika ruangan yang sedang dibuka dihapus, kembali ke layar awal
-      if (activeGroup?.id === roomId) {
-        setActiveGroup(null);
-        setIsMobileChatOpen(false);
-      }
+      if (activeGroup?.id === roomId) { setActiveGroup(null); setIsMobileChatOpen(false); }
       setShowRoomOptions(null);
     }
   };
@@ -215,6 +217,11 @@ export default function App() {
       messages.forEach(async (m) => { await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id)); });
       setShowRoomOptions(null);
     }
+  };
+
+  const togglePinMessage = async (msg) => {
+    await updateDoc(doc(db, `messages_${activeGroup.id}`, msg.id), { isPinned: !msg.isPinned });
+    setOpenMenuId(null);
   };
 
   const handleSendMessage = async (e) => {
@@ -227,7 +234,7 @@ export default function App() {
       setEditingMessage(null);
     } else {
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
-        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false
+        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false
       });
       await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
         lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp()
@@ -256,7 +263,7 @@ export default function App() {
       const data = await response.json();
       if (data.secure_url) {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
-          text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp()
+          text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false
         });
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
            lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp()
@@ -267,7 +274,6 @@ export default function App() {
     setIsUploading(false);
   };
 
-  // FORWARD WHATSAPP LANGSUNG DENGAN FILE (WEB SHARE API)
   const handleForwardToWA = async (msgArray) => {
     if (msgArray.length === 1 && msgArray[0].fileData && navigator.canShare) {
       try {
@@ -275,17 +281,15 @@ export default function App() {
         const response = await fetch(msg.fileData);
         const blob = await response.blob();
         
-        // Memaksa pengiriman file gambar/pdf langsung ke WhatsApp jika perangkat mendukung
         const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({ title: msg.fileName, text: msg.text || '', files: [file] });
           setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
           return; 
         }
-      } catch (error) { console.log("Perangkat tidak mendukung Share API dengan file, kembali ke mode Link."); }
+      } catch (error) { console.log("Fallback Share Link"); }
     }
 
-    // Jika gagal mengirim file langsung, atau pesannya banyak, fallback ke mode Link Teks biasa
     let finalWaText = msgArray.map((m) => {
       let textSegment = m.text || '';
       let header = `Pesan dari *${m.senderName}*:`;
@@ -297,23 +301,58 @@ export default function App() {
     setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
   };
 
-  const executeInternalForward = async (targetRooms) => {
-    if (!selectedMessages.length || !targetRooms.length) return;
+  const toggleForwardTarget = (target) => {
+    if (forwardTargets.some(t => t.id === target.id)) {
+      setForwardTargets(forwardTargets.filter(t => t.id !== target.id));
+    } else {
+      setForwardTargets([...forwardTargets, target]);
+    }
+  };
+
+  const executeInternalForward = async () => {
+    if (!selectedMessages.length || !forwardTargets.length) return;
     const msgsToForward = messages.filter(m => selectedMessages.includes(m.id));
     
-    for (let room of targetRooms) {
+    for (let target of forwardTargets) {
+      let roomId = target.id;
+      // Jika target adalah User (Kontak yang belum ada room-nya)
+      if (target.isContact) {
+         const existingRoom = chatRooms.find(r => r.type === 'private' && r.participants.includes(user.uid) && r.participants.includes(target.uid));
+         if (existingRoom) {
+            roomId = existingRoom.id;
+         } else {
+            const newRoom = await addDoc(collection(db, 'chatRooms'), {
+              name: `Private`, type: 'private',
+              createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
+              participants: [user.uid, target.uid], participantNames: [user.displayName, target.name]
+            });
+            roomId = newRoom.id;
+         }
+      }
+
       for (let msg of msgsToForward) {
-        await addDoc(collection(db, `messages_${room.id}`), {
+        await addDoc(collection(db, `messages_${roomId}`), {
           text: msg.text || '', fileData: msg.fileData || null, fileName: msg.fileName || null, isImage: msg.isImage || false,
-          uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isForwarded: true
+          uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isForwarded: true, isPinned: false
         });
       }
-      await updateDoc(doc(db, 'chatRooms', room.id), {
+      await updateDoc(doc(db, 'chatRooms', roomId), {
         lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp()
       });
     }
-    setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]);
-    showNotification("Sukses", `Pesan diteruskan ke ${targetRooms.length} obrolan.`);
+
+    // Jika forward hanya ke 1 target, pindah ke room tersebut
+    if (forwardTargets.length === 1) {
+       let target = forwardTargets[0];
+       let roomToOpen = chatRooms.find(r => r.id === target.id) || chatRooms.find(r => r.type === 'private' && r.participants.includes(target.uid));
+       if (roomToOpen) {
+          setActiveGroup(roomToOpen);
+          setIsMobileChatOpen(true);
+       }
+    }
+    
+    setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]); setForwardTargets([]);
+    showNotification("Sukses", `Pesan diteruskan.`);
   };
 
   const jumpToMessage = (msgId, room = null) => {
@@ -368,17 +407,6 @@ export default function App() {
       if (newSelection.length === 0) setIsSelectionMode(false);
     } else { setSelectedMessages([...selectedMessages, msgId]); }
   };
-  const handleDeleteMessage = async (msgId = null) => {
-    const isBulk = isSelectionMode && selectedMessages.length > 0;
-    const msgCount = isBulk ? selectedMessages.length : 1;
-    if (window.confirm(`Hapus ${msgCount} pesan secara permanen?`)) {
-      if (isBulk) {
-        for (const id of selectedMessages) await deleteDoc(doc(db, `messages_${activeGroup.id}`, id));
-        setIsSelectionMode(false); setSelectedMessages([]);
-      } else { await deleteDoc(doc(db, `messages_${activeGroup.id}`, msgId)); }
-      setOpenMenuId(null);
-    }
-  };
   const handleForceDownload = (url) => {
     let downloadUrl = url;
     if (url.includes('cloudinary.com') && !url.includes('fl_attachment')) { downloadUrl = url.replace('/upload/', '/upload/fl_attachment/'); }
@@ -386,8 +414,8 @@ export default function App() {
   };
   const handleEditGroupName = async () => {
     if (!isAdmin && activeGroup.createdBy !== user.uid) return alert("Hanya pembuat atau Admin yang bisa mengubah nama.");
-    const newName = window.prompt("Ubah nama grup:", activeGroup.name);
-    if (newName && newName.trim()) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { name: newName }); setActiveGroup({...activeGroup, name: newName}); }
+    const newName = window.prompt("Ubah nama grup:", activeGroup.displayName);
+    if (newName && newName.trim()) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { name: newName }); setActiveGroup({...activeGroup, name: newName, displayName: newName}); }
   };
   const handleUpdateGroupPhoto = async (e) => {
     const file = e.target.files[0];
@@ -397,7 +425,7 @@ export default function App() {
     try {
       const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method: 'POST', body: formData });
       const data = await response.json();
-      if (data.secure_url) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { avatar: data.secure_url }); setActiveGroup({...activeGroup, avatar: data.secure_url}); }
+      if (data.secure_url) { await updateDoc(doc(db, 'chatRooms', activeGroup.id), { avatar: data.secure_url }); setActiveGroup({...activeGroup, avatar: data.secure_url, displayAvatar: data.secure_url}); }
     } catch (error) { alert("Gagal mengubah foto profil."); }
   };
 
@@ -415,9 +443,16 @@ export default function App() {
     );
   }
 
-  const filteredRooms = chatRooms.filter(r => r.name.toLowerCase().includes(sidebarSearch.toLowerCase()));
+  const filteredRooms = chatRooms.filter(r => r.displayName.toLowerCase().includes(sidebarSearch.toLowerCase()));
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.email.toLowerCase().includes(contactSearch.toLowerCase()));
   const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
+  const pinnedMessages = messages.filter(m => m.isPinned);
+
+  // GABUNGKAN KONTAK DAN GRUP UNTUK MENU FORWARD
+  const forwardContactList = contacts.map(c => ({ id: c.uid, uid: c.uid, name: c.name, photo: c.photo, isContact: true }));
+  const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
+  const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
+
 
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
@@ -426,7 +461,7 @@ export default function App() {
       {/* TOAST NOTIFICATIONS */}
       <div className="fixed top-5 right-5 z-[1000] flex flex-col gap-2 pointer-events-none">
         {notifications.map(notif => (
-          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.name === notif.title))}>
+          <div key={notif.id} className="bg-[#1e293b] border border-[#3b82f6]/50 shadow-2xl rounded-xl p-4 w-72 flex items-start gap-3 animate-in slide-in-from-top-5 pointer-events-auto cursor-pointer" onClick={() => jumpToMessage(null, chatRooms.find(r => r.displayName === notif.title))}>
              <div className="bg-[#3b82f6]/20 p-2 rounded-lg text-[#3b82f6]"><BellRing size={20}/></div>
              <div><h4 className="font-bold text-sm text-[#f1f5f9]">{notif.title}</h4><p className="text-xs text-[#94a3b8] mt-1 truncate max-w-[200px]">{notif.body}</p></div>
           </div>
@@ -436,29 +471,44 @@ export default function App() {
       {/* MODAL FORWARD INTERNAL */}
       {modalConfig.type === 'forward' && (
          <div className="fixed inset-0 z-[600] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
              <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
                <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2"><Share2 className="text-[#3b82f6]" size={18}/> Teruskan Ke...</h2>
-               <button onClick={() => setModalConfig({type:null})} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
+               <button onClick={() => {setModalConfig({type:null}); setForwardTargets([]);}} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
              </div>
              
-             {/* OPSI FORWARD KE WHATSAPP DISINI */}
+             {/* OPSI FORWARD KE WHATSAPP */}
              <div className="p-4 border-b border-[#334155] bg-[#0f172a]">
                 <button onClick={() => handleForwardToWA(messages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
                    <Smartphone size={16} /> Teruskan ke Luar (WhatsApp)
                 </button>
              </div>
 
-             <div className="p-3 bg-[#1e293b]">
+             <div className="p-3 bg-[#1e293b] flex-1 flex flex-col min-h-0">
                 <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Kontak Nexus:</p>
-                <div className="overflow-y-auto max-h-[40vh] hide-scroll">
-                   {chatRooms.map(room => (
-                     <div key={room.id} onClick={() => executeInternalForward([room])} className="flex items-center gap-3 p-3 hover:bg-[#334155] rounded-xl cursor-pointer transition">
-                       <img src={room.avatar} alt={room.name} className="w-10 h-10 rounded-full" />
-                       <p className="font-medium text-[#f1f5f9] text-sm truncate flex-1">{room.name}</p>
-                     </div>
-                   ))}
+                <div className="flex items-center bg-[#0f172a] rounded-xl px-3 py-1.5 border border-[#334155] mb-2">
+                  <Search size={14} className="text-[#64748b]" />
+                  <input type="text" value={contactSearch} onChange={e => setContactSearch(e.target.value)} placeholder="Cari nama kontak..." className="bg-transparent border-none outline-none text-xs text-white w-full ml-2" />
                 </div>
+                
+                <div className="overflow-y-auto flex-1 hide-scroll">
+                   {allForwardOptions.map(opt => {
+                     const isSelected = forwardTargets.some(t => t.id === opt.id);
+                     return (
+                       <div key={opt.id} onClick={() => toggleForwardTarget(opt)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition ${isSelected ? 'bg-[#3b82f6]/20 border border-[#3b82f6]/50' : 'hover:bg-[#334155] border border-transparent'}`}>
+                         <div className="shrink-0">{isSelected ? <CheckSquare size={18} className="text-[#3b82f6]" /> : <Square size={18} className="text-[#64748b]" />}</div>
+                         <img src={opt.photo} alt={opt.name} className="w-10 h-10 rounded-full" />
+                         <p className="font-medium text-[#f1f5f9] text-sm truncate flex-1">{opt.name}</p>
+                       </div>
+                     )
+                   })}
+                </div>
+
+                {forwardTargets.length > 0 && (
+                  <button onClick={executeInternalForward} className="w-full mt-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
+                     <Send size={16} /> Kirim ke {forwardTargets.length} tujuan
+                  </button>
+                )}
              </div>
            </div>
          </div>
@@ -526,7 +576,7 @@ export default function App() {
         <div className="fixed inset-0 z-[300] bg-[#020617]/95 flex flex-col backdrop-blur-sm">
            <div className="h-16 flex items-center px-4 shrink-0 border-b border-[#334155]">
             <button onClick={() => {setPendingUploadFile(null); setPendingPreviewUrl(null);}} className="text-[#94a3b8] p-2 hover:bg-[#1e293b] rounded-full transition"><X size={26} /></button>
-            <span className="text-[#f1f5f9] ml-4 font-semibold">Kirim ke {activeGroup?.name}</span>
+            <span className="text-[#f1f5f9] ml-4 font-semibold">Kirim ke {activeGroup?.displayName}</span>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden">
             {pendingPreviewUrl ? <img src={pendingPreviewUrl} alt="Preview" className="max-w-full max-h-full rounded-lg drop-shadow-2xl" /> : <FileText size={100} className="text-[#475569]" />}
@@ -544,7 +594,7 @@ export default function App() {
         {/* COMPACT FAB Tombol (+) */}
         <div className="absolute bottom-5 right-5 z-50">
           {showFabMenu && (
-             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-40 mb-2 origin-bottom-right animate-in fade-in zoom-in duration-200">
+             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-36 mb-2 origin-bottom-right animate-in fade-in zoom-in duration-200">
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'japri'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><User size={16} className="text-[#10b981]"/> New Chat</button>
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'group'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><Users size={16} className="text-[#3b82f6]"/> New Group</button>
              </div>
@@ -577,7 +627,7 @@ export default function App() {
                 <div className="flex justify-between items-center mb-3"><span className="text-xs text-[#3b82f6] font-bold uppercase">Hasil Global ({globalSearchResults.length})</span> <button onClick={()=>setGlobalSearchResults(null)} className="text-[#ef4444] text-xs font-bold">Tutup</button></div>
                 {globalSearchResults.map(res => (
                    <div key={res.id} onClick={() => jumpToMessage(res.id, res.room)} className="bg-[#1e293b] p-3 rounded-lg mb-2 border border-[#334155] cursor-pointer hover:border-[#3b82f6]/50">
-                      <p className="text-[10px] text-[#10b981] mb-1 font-bold">{res.room?.name} • {res.senderName}</p>
+                      <p className="text-[10px] text-[#10b981] mb-1 font-bold">{res.room?.displayName} • {res.senderName}</p>
                       <p className="text-xs text-[#f1f5f9] truncate">{res.text || res.fileName}</p>
                    </div>
                 ))}
@@ -590,18 +640,16 @@ export default function App() {
                   <div key={room.id} className={`flex items-center p-3 mb-1 rounded-xl transition-all relative ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
                     <div className="flex-1 flex items-center min-w-0 cursor-pointer" onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }}>
                       <div className="relative">
-                        <img src={room.avatar} alt={room.name} className={`w-10 h-10 object-cover mr-3 ${room.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
+                        <img src={room.displayAvatar} alt={room.displayName} className={`w-10 h-10 object-cover mr-3 ${room.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
                         {room.type === 'private' && <div className="absolute -bottom-0.5 -right-0.5 bg-[#10b981] w-3 h-3 rounded-full border-2 border-[#0f172a]"></div>}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.name}</h3>
+                        <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.displayName}</h3>
                         <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Mulai obrolan...'}</p>
                       </div>
-                      {/* BADGE UNREAD COUNT */}
                       {unreadCount > 0 && <div className="w-5 h-5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount}</div>}
                     </div>
 
-                    {/* MENU OPSI RUANGAN (DELETE ROOM) */}
                     <div className="relative shrink-0 ml-1">
                       <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition opacity-0 group-hover:opacity-100 lg:opacity-100">
                         <MoreVertical size={14} />
@@ -633,10 +681,10 @@ export default function App() {
             <div className="bg-[#0f172a]/90 backdrop-blur-md h-16 flex items-center justify-between px-5 shrink-0 z-20 border-b border-[#1e293b]">
               <div className="flex items-center min-w-0 flex-1 cursor-pointer" onClick={() => setShowGroupInfo(!showGroupInfo)}>
                 <button onClick={(e) => { e.stopPropagation(); setIsMobileChatOpen(false); }} className="md:hidden mr-3 text-[#94a3b8]"><ArrowLeft size={20} /></button>
-                <img src={activeGroup.avatar} alt="Avatar" className={`w-9 h-9 object-cover mr-3 shadow-sm ${activeGroup.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
+                <img src={activeGroup.displayAvatar} alt="Avatar" className={`w-9 h-9 object-cover mr-3 shadow-sm ${activeGroup.type === 'private' ? 'rounded-full' : 'rounded-xl'}`} />
                 <div className="truncate">
                   <h2 className="font-bold text-[#f8fafc] truncate text-[14px] flex items-center gap-2">
-                    {activeGroup.name}
+                    {activeGroup.displayName}
                     {activeGroup.type === 'private' && <span className="px-1.5 py-0.5 bg-[#10b981]/20 text-[#10b981] text-[8px] rounded uppercase">Private</span>}
                   </h2>
                 </div>
@@ -652,6 +700,17 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Pinned Messages Header */}
+            {pinnedMessages.length > 0 && (
+              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] cursor-pointer hover:bg-[#334155] transition" onClick={() => jumpToMessage(pinnedMessages[0].id)}>
+                 <Star size={16} className="text-[#eab308]" />
+                 <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan</p>
+                    <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[0].text || pinnedMessages[0].fileName}</p>
+                 </div>
+              </div>
+            )}
 
             {showChatSearch && (
               <div className="bg-[#0f172a] px-5 py-2.5 border-b border-[#1e293b] flex items-center shrink-0 z-10 shadow-md">
@@ -687,7 +746,9 @@ export default function App() {
                       <div className={`p-2.5 rounded-2xl shadow-sm text-[13.5px] relative leading-relaxed border
                         ${isMe ? 'bg-[#10b981]/10 border-[#10b981]/20 text-[#f1f5f9] rounded-br-sm' : 'bg-[#1e293b] border-[#334155] text-[#f1f5f9] rounded-bl-sm'}
                         ${isSelected ? 'ring-2 ring-[#3b82f6]' : ''}
+                        ${msg.isPinned ? 'border-[#eab308]/50 shadow-[0_0_10px_rgba(234,179,8,0.2)]' : ''}
                       `}>
+                        {msg.isPinned && <div className="absolute -top-2.5 -right-2.5 bg-[#eab308] p-1 rounded-full text-white shadow-md z-10"><Star size={10} fill="currentColor"/></div>}
                         {msg.isForwarded && <div className="text-[10px] text-[#94a3b8] italic mb-1 flex items-center gap-1"><Share2 size={10}/> Diteruskan</div>}
                         {!isMe && activeGroup.type !== 'private' && <div className="text-[10px] font-bold text-[#3b82f6] mb-1">{msg.senderName}</div>}
                         
@@ -713,6 +774,7 @@ export default function App() {
 
                         {isMenuOpen && (
                           <div onClick={(e) => e.stopPropagation()} className={`absolute top-6 ${isMe ? 'right-0' : 'left-5'} bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-1.5 w-40 z-[100]`}>
+                            <button onClick={() => togglePinMessage(msg)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Star size={12} className="text-[#eab308]" /> {msg.isPinned ? 'Lepas Sematan' : 'Sematkan Pesan'}</button>
                             <button onClick={() => {setModalConfig({type: 'forward'}); setIsSelectionMode(true); setSelectedMessages([msg.id]); setOpenMenuId(null);}} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Share2 size={12} className="text-[#3b82f6]" /> Teruskan Chat</button>
                             <button onClick={() => {setIsSelectionMode(true); setSelectedMessages([msg.id]); setOpenMenuId(null);}} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3 border-b border-[#334155]"><CheckSquare size={12} className="text-[#10b981]"/> Pilih Pesan</button>
                             {isMe && <button onClick={() => startEditing(msg)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Edit2 size={12} className="text-[#eab308]" /> Edit Pesan</button>}
@@ -780,7 +842,7 @@ export default function App() {
           <div className="flex-1 overflow-y-auto bg-[#020617] hide-scroll">
             <div className="flex flex-col items-center py-6 bg-[#0f172a] mb-2 border-b border-[#1e293b]">
               <div className="relative group cursor-pointer mb-3">
-                <img src={activeGroup.avatar} alt="Avatar" className={`w-20 h-20 object-cover border-4 border-[#1e293b] shadow-xl ${activeGroup.type === 'private' ? 'rounded-full' : 'rounded-2xl'}`} />
+                <img src={activeGroup.displayAvatar} alt="Avatar" className={`w-20 h-20 object-cover border-4 border-[#1e293b] shadow-xl ${activeGroup.type === 'private' ? 'rounded-full' : 'rounded-2xl'}`} />
                 {(isAdmin || activeGroup.createdBy === user.uid) && (
                   <div onClick={() => groupPhotoInputRef.current?.click()} className="absolute inset-0 bg-black/50 rounded-2xl md:opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
                     <Camera className="text-white" size={24} />
@@ -789,7 +851,7 @@ export default function App() {
                 <input type="file" ref={groupPhotoInputRef} onChange={handleUpdateGroupPhoto} accept="image/*" className="hidden" />
               </div>
               <div className="flex items-center gap-2 px-4 text-center">
-                <h2 className="text-[#f8fafc] text-base font-bold truncate">{activeGroup.name}</h2>
+                <h2 className="text-[#f8fafc] text-base font-bold truncate">{activeGroup.displayName}</h2>
                 {(isAdmin || activeGroup.createdBy === user.uid) && (
                   <button onClick={handleEditGroupName} className="text-[#3b82f6] hover:bg-[#1e293b] p-1 rounded-md shrink-0"><Edit3 size={14} /></button>
                 )}
@@ -808,10 +870,7 @@ export default function App() {
                     <div className="flex-1 min-w-0 pr-1">
                       <p className="font-medium text-[#f1f5f9] text-[11px] truncate">{m.fileName}</p>
                     </div>
-                    
-                    {/* JUMP TO MESSAGE BUTTON */}
                     <button onClick={() => jumpToMessage(m.id)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#3b82f6]/20 hover:text-[#3b82f6] transition text-[#94a3b8] shrink-0" title="Lihat di Chat"><Eye size={14}/></button>
-                    
                     <button onClick={() => handleForceDownload(m.fileData)} className="p-1.5 bg-[#0f172a] rounded-lg hover:bg-[#10b981]/20 hover:text-[#10b981] transition text-[#94a3b8] shrink-0" title="Unduh File"><Download size={14}/></button>
                   </div>
                 ))}
