@@ -33,7 +33,6 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   
-  // State untuk menu dropdown dan Edit
   const [openMenuId, setOpenMenuId] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   
@@ -58,11 +57,8 @@ export default function App() {
   }, [activeGroup.id, user]);
 
   const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
-    } catch (error) {
-      console.error("Error login:", error);
-    }
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); } 
+    catch (error) { console.error("Error login:", error); }
   };
 
   const handleSendMessage = async (e) => {
@@ -70,14 +66,12 @@ export default function App() {
     if (!newMessage.trim()) return;
     
     if (editingMessage) {
-      // Proses Edit Pesan
       await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), {
         text: newMessage,
         isEdited: true
       });
       setEditingMessage(null);
     } else {
-      // Proses Kirim Pesan Baru
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
         text: newMessage,
         uid: user.uid,
@@ -103,7 +97,7 @@ export default function App() {
     setEditingMessage(msg);
     setNewMessage(msg.text);
     setOpenMenuId(null);
-    textareaRef.current?.focus();
+    setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
   const cancelEditing = () => {
@@ -114,8 +108,6 @@ export default function App() {
 
   const handleKeyDown = (e) => {
     const isMobile = window.innerWidth <= 768;
-    // Di Desktop: Enter untuk kirim, Shift+Enter untuk baris baru
-    // Di Mobile: Enter untuk baris baru (default keyboard HP)
     if (e.key === 'Enter' && !e.shiftKey) {
       if (!isMobile) {
         e.preventDefault();
@@ -132,7 +124,7 @@ export default function App() {
 
   const handleFileProcessing = async (file) => {
     if (file.size > 800000) {
-      alert("Batas sementara 800KB. Kita akan segera menggunakan Cloudinary!");
+      alert("Batas sementara 800KB.");
       return;
     }
     setIsUploading(true);
@@ -231,7 +223,6 @@ export default function App() {
       {/* AREA CHAT */}
       <div className={`${isMobileChatOpen ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#efeae2] relative`} style={{ backgroundImage: "url('https://web.whatsapp.com/img/bg-chat-tile-dark_a4be512e7195b6b733d9110b408f075d.png')", opacity: 0.95 }}>
         
-        {/* Header Chat */}
         <div className="bg-[#f0f2f5] h-16 flex items-center px-4 border-b shrink-0 z-10 shadow-sm">
           <button onClick={() => setIsMobileChatOpen(false)} className="md:hidden mr-3 text-gray-600 hover:text-gray-800 p-2 rounded-full hover:bg-gray-200">
             <ArrowLeft size={24} />
@@ -240,8 +231,7 @@ export default function App() {
           <h2 className="font-medium text-gray-800 truncate text-lg">{activeGroup.name}</h2>
         </div>
 
-        {/* Area Pesan */}
-        <div className="flex-1 overflow-y-auto p-4 md:px-10 flex flex-col gap-3">
+        <div className="flex-1 overflow-y-auto p-4 md:px-10 flex flex-col gap-3 relative z-0">
           {messages.map((msg) => {
             const isMe = msg.uid === user.uid;
             const isMenuOpen = openMenuId === msg.id;
@@ -251,26 +241,32 @@ export default function App() {
                 {!isMe && <span className="text-[11px] font-medium text-gray-500 ml-2 mb-1">{msg.senderName}</span>}
                 <div className={`p-2 px-3 rounded-lg shadow text-[15px] relative break-words leading-relaxed ${isMe ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'}`}>
                   
-                  {/* Panah Dropdown Menu */}
+                  {/* TOMBOL MENU DROPDOWN (DIPERBAIKI) */}
                   <div 
                     onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : msg.id); }}
-                    className={`absolute top-1 right-1 cursor-pointer p-1 rounded-full bg-gradient-to-l from-[#d9fdd3] (isMe) via-[#d9fdd3] to-transparent z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity ${isMenuOpen ? 'opacity-100' : ''}`}
+                    className={`absolute top-0 right-0 cursor-pointer p-1 rounded-bl-lg rounded-tr-lg z-20 transition-opacity shadow-sm
+                      ${isMe ? 'bg-[#d9fdd3] hover:bg-[#cbf0c4]' : 'bg-white hover:bg-gray-50'}
+                      md:opacity-0 md:group-hover:opacity-100 ${isMenuOpen ? 'opacity-100' : 'opacity-60'}
+                    `}
                   >
-                    <ChevronDown size={20} className="text-gray-500 hover:text-gray-800" />
+                    <ChevronDown size={18} className="text-gray-500" />
                   </div>
 
-                  {/* Menu Dropdown Popup */}
+                  {/* KOTAK MENU DROPDOWN */}
                   {isMenuOpen && (
-                    <div className={`absolute top-8 ${isMe ? 'right-0' : 'left-0'} bg-white border border-gray-200 shadow-xl rounded-lg py-2 w-40 z-20`}>
-                      <button onClick={() => handleForwardToWA(msg)} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                    <div 
+                      onClick={(e) => e.stopPropagation()} 
+                      className={`absolute top-8 ${isMe ? 'right-0' : 'left-8'} bg-white border border-gray-200 shadow-xl rounded-lg py-1 w-40 z-[100]`}
+                    >
+                      <button onClick={() => handleForwardToWA(msg)} className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
                         <Share2 size={16} /> Teruskan (WA)
                       </button>
                       {isMe && (
                         <>
-                          <button onClick={() => startEditing(msg)} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                          <button onClick={() => startEditing(msg)} className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
                             <Edit2 size={16} /> Edit Pesan
                           </button>
-                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 flex items-center gap-2">
+                          <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-gray-100 flex items-center gap-2">
                             <Trash2 size={16} /> Hapus
                           </button>
                         </>
@@ -278,9 +274,8 @@ export default function App() {
                     </div>
                   )}
                   
-                  {/* Tampilan Gambar/Dokumen */}
                   {msg.isImage && (
-                    <div className="relative group/img mt-2">
+                    <div className="relative group/img mt-1">
                       <img src={msg.fileData} alt="attachment" className="max-w-full md:max-w-[300px] rounded mb-1 object-cover" />
                       <a href={msg.fileData} download={msg.fileName} className="absolute bottom-2 right-2 p-2 bg-black/60 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition shadow-lg hover:bg-black/80">
                         <Download size={18} />
@@ -289,7 +284,7 @@ export default function App() {
                   )}
                   
                   {!msg.isImage && msg.fileData && (
-                    <div className="flex items-center gap-3 bg-black/5 p-3 rounded mb-1 mt-2 text-gray-800 border border-black/10">
+                    <div className="flex items-center gap-3 bg-black/5 p-3 rounded mb-1 mt-1 text-gray-800 border border-black/10">
                       <FileText size={24} className="text-[#00a884] shrink-0" />
                       <div className="flex-1 min-w-0"><p className="font-medium truncate text-sm">{msg.fileName}</p></div>
                       <a href={msg.fileData} download={msg.fileName} className="p-2 bg-white rounded-full shadow hover:bg-gray-100 shrink-0">
@@ -298,7 +293,6 @@ export default function App() {
                     </div>
                   )}
                   
-                  {/* Teks Pesan */}
                   {msg.text && <div dangerouslySetInnerHTML={formatText(msg.text)} className="mt-1 pr-6" />}
                   
                   <div className="flex items-center justify-end gap-1 mt-1">
@@ -315,9 +309,8 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Indikator Mode Edit */}
         {editingMessage && (
-          <div className="bg-[#f0f2f5] px-4 py-2 border-t flex justify-between items-center text-sm">
+          <div className="bg-[#f0f2f5] px-4 py-2 border-t flex justify-between items-center text-sm z-10 shadow-sm">
             <div>
               <span className="font-semibold text-[#00a884]">Mengedit pesan</span>
               <p className="text-gray-500 truncate max-w-xs">{editingMessage.text}</p>
@@ -328,15 +321,11 @@ export default function App() {
           </div>
         )}
 
-        {/* Input Form */}
         <form onSubmit={handleSendMessage} className="bg-[#f0f2f5] p-2 md:p-3 flex items-end gap-2 shrink-0 z-10 border-t">
-          
-          <button type="button" onClick={() => textareaRef.current?.focus()} className="text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1">
+          <button type="button" onClick={() => alert("Di PC: Tekan tombol [Windows] + [.] \nDi HP: Gunakan tombol Emoji bawaan")} className="text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1">
             <Smile size={26} />
           </button>
-
           <input type="file" ref={fileInputRef} onChange={(e) => { if(e.target.files[0]) handleFileProcessing(e.target.files[0]); e.target.value=''; }} className="hidden" />
-          
           <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading || editingMessage} className={`text-gray-500 hover:text-gray-700 p-2 md:p-3 shrink-0 mb-1 ${(isUploading || editingMessage) ? 'opacity-50' : ''}`}>
             {isUploading ? <div className="w-6 h-6 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div> : <Paperclip size={26} />}
           </button>
