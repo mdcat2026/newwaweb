@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star } from 'lucide-react';
+import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment, arrayUnion } from 'firebase/firestore';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, Copy, Bell, BellOff } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -31,7 +31,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 export default function App() {
-  // === SEMUA HOOKS/STATE WAJIB DI ATAS (Mencegah Error #310) ===
   const [user, setUser] = useState(null);
   const [contacts, setContacts] = useState([]);
   
@@ -54,12 +53,6 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  const [localReadStatus, setLocalReadStatus] = useState(() => {
-    const saved = localStorage.getItem('nexusReadStatus');
-    return saved ? JSON.parse(saved) : {};
-  });
-  const [unreadCounts, setUnreadCounts] = useState({}); 
-  
   const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
   const [forwardTargets, setForwardTargets] = useState([]); 
@@ -71,15 +64,137 @@ export default function App() {
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [uploadCaption, setUploadCaption] = useState('');
   
-  // State untuk perputaran Pin Message Progresif
   const [currentPinIndex, setCurrentPinIndex] = useState(0);
+
+  // STATE BARU: Hapus Pesan, Toast Info, & Notifikasi Sistem
+  const [deleteModalTargets, setDeleteModalTargets] = useState(null);
+  const [sysToast, setSysToast] = useState(null);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const groupPhotoInputRef = useRef(null);
   const textareaRef = useRef(null);
+  
+  // REF UNTUK LONG PRESS, BACK NAVIGATION, & NOTIFIKASI LUAR APLIKASI
+  const longPressTimerRef = useRef(null);
+  const lastBackPressRef = useRef(0);
+  const lastNotifiedRef = useRef({});
+  const isInitialLoadRef = useRef(true);
+  const navStateRef = useRef({});
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  const showToast = (msg) => {
+    setSysToast(msg);
+    setTimeout(() => setSysToast(null), 2500);
+  };
+
+  // SINKRONISASI STATE KE REF UNTUK HANDLER TOMBOL BACK HP
+  useEffect(() => {
+    navStateRef.current = {
+      previewMedia,
+      pendingUploadFile,
+      deleteModalTargets,
+      modalType: modalConfig.type,
+      isSelectionMode,
+      showGroupInfo,
+      showChatSearch,
+      isMobileChatOpen
+    };
+  }, [previewMedia, pendingUploadFile, deleteModalTargets, modalConfig.type, isSelectionMode, showGroupInfo, showChatSearch, isMobileChatOpen]);
+
+  // 4. FITUR TOMBOL BACK HP & DOUBLE KLIK UNTUK KELUAR
+  useEffect(() => {
+    window.history.pushState({ page: 'nexus_root' }, '');
+
+    const handlePopState = (e) => {
+      const s = navStateRef.current;
+
+      if (s.previewMedia) {
+        setPreviewMedia(null);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.pendingUploadFile) {
+        setPendingUploadFile(null);
+        setPendingPreviewUrl(null);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.deleteModalTargets) {
+        setDeleteModalTargets(null);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.modalType) {
+        setModalConfig({ type: null });
+        setForwardTargets([]);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.isSelectionMode) {
+        setIsSelectionMode(false);
+        setSelectedMessages([]);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.showGroupInfo) {
+        setShowGroupInfo(false);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.showChatSearch) {
+        setShowChatSearch(false);
+        setChatSearch('');
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else if (s.isMobileChatOpen) {
+        setIsMobileChatOpen(false);
+        window.history.pushState({ page: 'nexus_root' }, '');
+      } else {
+        // Berada di Home Page: Cek double-back dalam 2 detik
+        const now = Date.now();
+        if (now - lastBackPressRef.current < 2000) {
+          window.history.back(); // Keluar dari aplikasi
+        } else {
+          lastBackPressRef.current = now;
+          showToast("Tekan kembali sekali lagi untuk keluar aplikasi");
+          window.history.pushState({ page: 'nexus_root' }, '');
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // 6. FUNGSI IZIN & PEMICU NOTIFIKASI OS SAAT DI LUAR APLIKASI
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      alert("Browser di perangkat ini tidak mendukung notifikasi sistem.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setNotifPermission(perm);
+    if (perm === 'granted') {
+      showToast("Notifikasi luar aplikasi diaktifkan!");
+    } else {
+      showToast("Izin notifikasi ditolak.");
+    }
+  };
+
+  const triggerExternalNotification = (roomName, messageText, avatarUrl) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+      const notif = new Notification(roomName, {
+        body: messageText || 'Mengirim lampiran file...',
+        icon: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
+        tag: roomName,
+        renotify: true,
+        silent: false
+      });
+      notif.onclick = () => {
+        window.focus();
+        notif.close();
+      };
+      // Bunyi ting halus
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
+      audio.volume = 0.4;
+      audio.play().catch(() => {});
+    } catch (err) {
+      console.log("Notifikasi OS gagal:", err);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -102,14 +217,14 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
+  // LISTEN DAFTAR CHAT, UNREAD DATABASE, & NOTIFIKASI LUAR APLIKASI
   useEffect(() => {
     if (!user) return;
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
     const unsub = onSnapshot(qRooms, (snapshot) => {
       const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
       const processedRooms = [];
-      let newUnreadCounts = { ...unreadCounts };
+      let totalUnreadGlobal = 0;
       
       rooms.forEach(room => {
         const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
@@ -128,39 +243,46 @@ export default function App() {
               room.displayName = room.name;
            }
            
-           const roomTime = room.lastMessageTime?.toMillis ? room.lastMessageTime.toMillis() : 0;
-           const readTime = localReadStatus[room.id] || 0;
-           
-           if (roomTime > readTime && room.lastSenderId !== user.uid) {
-              if (activeGroup?.id !== room.id) {
-                newUnreadCounts[room.id] = room.unreadCount?.[user.uid] || 1;
+           const isCurrentlyOpen = activeGroup?.id === room.id && !document.hidden;
+           room.badgeCount = isCurrentlyOpen ? 0 : (room.unreadCount?.[user.uid] || 0);
+           totalUnreadGlobal += room.badgeCount;
+
+           const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
+           if (!isInitialLoadRef.current && msgTimeStr && lastNotifiedRef.current[room.id] !== msgTimeStr) {
+              if (room.lastSenderId && room.lastSenderId !== user.uid) {
+                 // Pemicu Notifikasi Sistem jika user sedang di luar aplikasi / tab diminimalkan
+                 if (document.hidden || !document.hasFocus()) {
+                    triggerExternalNotification(room.displayName, room.lastMessage, room.displayAvatar);
+                 }
               }
-           } else {
-              newUnreadCounts[room.id] = 0;
            }
+           if (msgTimeStr) {
+              lastNotifiedRef.current[room.id] = msgTimeStr;
+           }
+
            processedRooms.push(room);
         }
       });
       
-      setUnreadCounts(newUnreadCounts);
+      isInitialLoadRef.current = false;
       setChatRooms(processedRooms);
+
+      // Update App Badge di Ikon Home Screen HP & Judul Tab
+      if ('setAppBadge' in navigator) {
+         if (totalUnreadGlobal > 0) navigator.setAppBadge(totalUnreadGlobal).catch(() => {});
+         else navigator.clearAppBadge().catch(() => {});
+      }
+      document.title = totalUnreadGlobal > 0 ? `(${totalUnreadGlobal}) Nexus Chat` : 'Nexus Chat';
     });
     return () => unsub();
-  }, [user, contacts, localReadStatus]);
+  }, [user, contacts, activeGroup]);
 
+  // AUTO-READ KETIKA ROOM DIBUKA
   useEffect(() => {
     if (!user || !activeGroup) return;
-    
-    // Reset index pin saat pindah chat room
     setCurrentPinIndex(0);
 
     if (activeGroup.id) {
-       const now = Date.now();
-       setLocalReadStatus(prev => {
-          const newStatus = {...prev, [activeGroup.id]: now};
-          localStorage.setItem('nexusReadStatus', JSON.stringify(newStatus));
-          return newStatus;
-       });
        updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
     }
 
@@ -168,6 +290,10 @@ export default function App() {
     const unsub = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      
+      if (!document.hidden) {
+         updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
+      }
     });
     
     setIsSelectionMode(false); setSelectedMessages([]); setShowGroupInfo(false); setChatSearch(''); setShowChatSearch(false);
@@ -190,17 +316,90 @@ export default function App() {
     return () => window.removeEventListener('paste', handlePaste);
   }, [user, activeGroup, modalConfig]);
 
+  // 2. FITUR KLIK LAMA (LONG PRESS) DI HP UNTUK SELECTION MODE
+  const handleTouchStartMsg = (msgId) => {
+    if (isSelectionMode) return;
+    longPressTimerRef.current = setTimeout(() => {
+      setIsSelectionMode(true);
+      setSelectedMessages([msgId]);
+      setOpenMenuId(null);
+      if (navigator.vibrate) navigator.vibrate(45);
+    }, 500);
+  };
+
+  const handleTouchEndOrMoveMsg = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  // 3. FITUR SALIN PESAN (COPY)
+  const handleCopyMessages = (msgArray) => {
+    const textToCopy = msgArray.map(m => m.text || m.fileData || '').filter(Boolean).join('\n\n');
+    if (textToCopy) {
+      navigator.clipboard.writeText(textToCopy);
+      showToast(`${msgArray.length} pesan disalin ke clipboard`);
+    }
+    setIsSelectionMode(false);
+    setSelectedMessages([]);
+    setOpenMenuId(null);
+  };
+
+  // 1 & 5. FITUR HAPUS PESAN (UNTUK SAYA ATAU UNTUK SEMUA)
+  const openDeleteConfirmation = (msgId = null) => {
+    const targetIds = msgId ? [msgId] : selectedMessages;
+    if (targetIds.length === 0) return;
+    const targetObjs = messages.filter(m => targetIds.includes(m.id));
+    setDeleteModalTargets(targetObjs);
+    setOpenMenuId(null);
+  };
+
+  const executeDeleteForMe = async () => {
+    if (!deleteModalTargets || !activeGroup) return;
+    try {
+      for (const msg of deleteModalTargets) {
+        await updateDoc(doc(db, `messages_${activeGroup.id}`, msg.id), {
+          deletedFor: arrayUnion(user.uid)
+        });
+      }
+      showToast("Pesan dihapus untuk Anda");
+    } catch (err) {
+      alert("Gagal menghapus pesan.");
+    }
+    setDeleteModalTargets(null);
+    setIsSelectionMode(false);
+    setSelectedMessages([]);
+  };
+
+  const executeDeleteForEveryone = async () => {
+    if (!deleteModalTargets || !activeGroup) return;
+    try {
+      for (const msg of deleteModalTargets) {
+        await deleteDoc(doc(db, `messages_${activeGroup.id}`, msg.id));
+      }
+      showToast("Pesan dihapus untuk semua orang");
+    } catch (err) {
+      alert("Gagal menghapus pesan.");
+    }
+    setDeleteModalTargets(null);
+    setIsSelectionMode(false);
+    setSelectedMessages([]);
+  };
+
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { console.error("Error login:", error); }
   };
 
   const submitNewGroup = async () => {
     if (!newGroupName.trim()) return;
+    const allMemberUids = [user.uid, ...contacts.map(c => c.uid)];
+    const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`;
     const newRoom = await addDoc(collection(db, 'chatRooms'), {
-      name: newGroupName, type: 'group', avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`,
-      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: [], unreadCount: {}
+      name: newGroupName, type: 'group', avatar: avatarUrl,
+      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: allMemberUids, unreadCount: {}
     });
-    setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: newRoom.avatar, displayAvatar: newRoom.avatar, type: 'group' });
+    setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: avatarUrl, displayAvatar: avatarUrl, type: 'group', participants: allMemberUids });
     setModalConfig({ type: null }); setNewGroupName(''); setIsMobileChatOpen(true);
   };
 
@@ -216,7 +415,7 @@ export default function App() {
         participantNames: [user.displayName, targetUser.name],
         unreadCount: {}
       });
-      setActiveGroup({ id: newRoom.id, name: 'Private', displayName: targetUser.name, avatar: targetUser.photo, displayAvatar: targetUser.photo, type: 'private' });
+      setActiveGroup({ id: newRoom.id, name: 'Private', displayName: targetUser.name, avatar: targetUser.photo, displayAvatar: targetUser.photo, type: 'private', participants: [user.uid, targetUser.uid] });
     }
     setModalConfig({ type: null }); setIsMobileChatOpen(true);
   };
@@ -231,7 +430,9 @@ export default function App() {
 
   const handleClearAllMessages = async () => {
     if (window.confirm("Bersihkan isi percakapan? (Pesan akan terhapus secara permanen)")) {
-      messages.forEach(async (m) => { await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id)); });
+      for (const m of messages) {
+        await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id));
+      }
       setShowRoomOptions(null);
     }
   };
@@ -251,11 +452,12 @@ export default function App() {
       setEditingMessage(null);
     } else {
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
-        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false
+        text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false, deletedFor: []
       });
       
-      const updateData = { lastMessage: msgText.substring(0, 30) + (msgText.length>30?'...':''), lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-      (activeGroup.participants || []).forEach(pUid => {
+      const updateData = { lastMessage: msgText.substring(0, 35) + (msgText.length > 35 ? '...' : ''), lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+      const targetUids = activeGroup.type === 'group' ? contacts.map(c => c.uid) : (activeGroup.participants || []);
+      targetUids.forEach(pUid => {
          if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
       });
       await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
@@ -283,11 +485,12 @@ export default function App() {
       const data = await response.json();
       if (data.secure_url) {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
-          text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false
+          text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false, deletedFor: []
         });
         
-        const updateData = { lastMessage: 'Mengirim file...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-        (activeGroup.participants || []).forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
+        const updateData = { lastMessage: `📎 ${pendingUploadFile.name}`, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+        const targetUids = activeGroup.type === 'group' ? contacts.map(c => c.uid) : (activeGroup.participants || []);
+        targetUids.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
         
         setPendingUploadFile(null); setPendingPreviewUrl(null); setUploadCaption('');
@@ -305,7 +508,7 @@ export default function App() {
         const file = new File([blob], msg.fileName || 'Lampiran', { type: blob.type });
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({ title: msg.fileName, text: msg.text || '', files: [file] });
-          setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
+          setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null); setModalConfig({type: null});
           return; 
         }
       } catch (error) { console.log("Fallback Share Link"); }
@@ -317,7 +520,7 @@ export default function App() {
       return `${header}\n${textSegment}`;
     }).join('\n\n━━━━━━━━━━━━━━━\n\n'); 
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(finalWaText)}`, '_blank');
-    setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null);
+    setIsSelectionMode(false); setSelectedMessages([]); setOpenMenuId(null); setModalConfig({type: null});
   };
 
   const toggleForwardTarget = (target) => {
@@ -331,10 +534,12 @@ export default function App() {
     
     for (let target of forwardTargets) {
       let roomId = target.id;
+      let targetParticipants = [];
       if (target.isContact) {
          const existingRoom = chatRooms.find(r => r.type === 'private' && r.participants.includes(user.uid) && r.participants.includes(target.uid));
          if (existingRoom) {
             roomId = existingRoom.id;
+            targetParticipants = existingRoom.participants;
          } else {
             const newRoom = await addDoc(collection(db, 'chatRooms'), {
               name: `Private`, type: 'private',
@@ -342,19 +547,22 @@ export default function App() {
               participants: [user.uid, target.uid], participantNames: [user.displayName, target.name], unreadCount: {}
             });
             roomId = newRoom.id;
+            targetParticipants = [user.uid, target.uid];
          }
+      } else {
+         const grp = chatRooms.find(r => r.id === roomId);
+         targetParticipants = grp?.type === 'group' ? contacts.map(c => c.uid) : (grp?.participants || []);
       }
 
       for (let msg of msgsToForward) {
         await addDoc(collection(db, `messages_${roomId}`), {
           text: msg.text || '', fileData: msg.fileData || null, fileName: msg.fileName || null, isImage: msg.isImage || false,
-          uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isForwarded: true, isPinned: false
+          uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isForwarded: true, isPinned: false, deletedFor: []
         });
       }
       
-      const targetRoom = chatRooms.find(r => r.id === roomId);
       const updateData = { lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-      if (targetRoom) { (targetRoom.participants || []).forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); }); }
+      targetParticipants.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
       await updateDoc(doc(db, 'chatRooms', roomId), updateData);
     }
 
@@ -364,6 +572,7 @@ export default function App() {
        if (roomToOpen) { setActiveGroup(roomToOpen); setIsMobileChatOpen(true); }
     }
     setModalConfig({type: null}); setIsSelectionMode(false); setSelectedMessages([]); setForwardTargets([]);
+    showToast("Pesan berhasil diteruskan");
   };
 
   const jumpToMessage = (msgId, room = null) => {
@@ -378,7 +587,7 @@ export default function App() {
         el.classList.add('bg-[#3b82f6]/40', 'transition-colors', 'duration-[2000ms]');
         setTimeout(() => el.classList.remove('bg-[#3b82f6]/40'), 3000);
       }
-    }, 600);
+    }, 500);
   };
 
   const handleGlobalSearch = async (e) => {
@@ -390,6 +599,7 @@ export default function App() {
         const snap = await getDocs(q);
         snap.forEach(docSnap => {
           const data = docSnap.data();
+          if (data.deletedFor?.includes(user.uid)) return;
           const term = sidebarSearch.toLowerCase();
           if (data.text?.toLowerCase().includes(term) || data.fileName?.toLowerCase().includes(term)) { results.push({ ...data, id: docSnap.id, room: room }); }
         });
@@ -449,12 +659,14 @@ export default function App() {
     );
   }
 
+  // Filter pesan yang belum dihapus untuk diri sendiri
+  const visibleMessages = messages.filter(m => !m.deletedFor?.includes(user.uid));
+
   const filteredRooms = chatRooms.filter(r => r.displayName.toLowerCase().includes(sidebarSearch.toLowerCase()));
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.email.toLowerCase().includes(contactSearch.toLowerCase()));
-  const filteredMessages = chatSearch.trim() ? messages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
+  const filteredMessages = chatSearch.trim() ? visibleMessages.filter(m => m.text?.toLowerCase().includes(chatSearch.toLowerCase()) || m.fileName?.toLowerCase().includes(chatSearch.toLowerCase())) : visibleMessages;
   
-  // LOGIKA PIN MESSAGE PROGRESIF
-  const pinnedMessages = messages.filter(m => m.isPinned).sort((a, b) => {
+  const pinnedMessages = visibleMessages.filter(m => m.isPinned).sort((a, b) => {
       const timeA = a.pinnedAt?.toMillis() || a.timestamp?.toMillis() || 0;
       const timeB = b.pinnedAt?.toMillis() || b.timestamp?.toMillis() || 0;
       return timeB - timeA; 
@@ -462,10 +674,8 @@ export default function App() {
 
   const handlePinClick = () => {
     if (pinnedMessages.length === 0) return;
-    const msgToJump = pinnedMessages[currentPinIndex];
+    const msgToJump = pinnedMessages[currentPinIndex] || pinnedMessages[0];
     jumpToMessage(msgToJump.id);
-    
-    // Geser index untuk klik berikutnya (looping)
     setCurrentPinIndex(prev => (prev + 1) % pinnedMessages.length);
   };
 
@@ -473,11 +683,44 @@ export default function App() {
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
+  // Cek apakah semua pesan yang akan dihapus adalah milik sendiri atau user adalah Admin
+  const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.every(m => m.uid === user.uid || isAdmin);
+
   return (
-    <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9]" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
+    <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9] select-none md:select-auto" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
 
-      {/* MODAL FORWARD INTERNAL */}
+      {/* TOAST MINI (SALIN & DOUBLE BACK EXIT) */}
+      {sysToast && (
+        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[1000] bg-[#1e293b] border border-[#3b82f6]/50 text-[#f1f5f9] px-4 py-2 rounded-full shadow-2xl text-xs font-medium pointer-events-none animate-bounce">
+          {sysToast}
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI HAPUS PESAN (UNTUK SAYA / UNTUK SEMUA) */}
+      {deleteModalTargets && (
+        <div className="fixed inset-0 z-[700] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDeleteModalTargets(null)}>
+          <div className="bg-[#1e293b] w-full max-w-xs rounded-2xl border border-[#334155] shadow-2xl p-5 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-[#f1f5f9] text-sm">Hapus {deleteModalTargets.length} pesan?</h3>
+            <p className="text-xs text-[#94a3b8]">Pilih metode penghapusan pesan di bawah ini:</p>
+            <div className="flex flex-col gap-2 mt-2">
+              {canDeleteForEveryone && (
+                <button onClick={executeDeleteForEveryone} className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#ef4444] text-white hover:bg-[#dc2626] transition text-center">
+                  Hapus untuk Semua Orang
+                </button>
+              )}
+              <button onClick={executeDeleteForMe} className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#0f172a] text-[#f1f5f9] border border-[#334155] hover:bg-[#334155] transition text-center">
+                Hapus untuk Saya
+              </button>
+              <button onClick={() => setDeleteModalTargets(null)} className="w-full py-2 px-4 rounded-xl text-xs font-semibold text-[#94a3b8] hover:text-white transition text-center mt-1">
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FORWARD INTERNAL & WA */}
       {modalConfig.type === 'forward' && (
          <div className="fixed inset-0 z-[600] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
            <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
@@ -487,7 +730,7 @@ export default function App() {
              </div>
              
              <div className="p-4 border-b border-[#334155] bg-[#0f172a]">
-                <button onClick={() => handleForwardToWA(messages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
+                <button onClick={() => handleForwardToWA(visibleMessages.filter(m => selectedMessages.includes(m.id)))} className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm">
                    <Smartphone size={16} /> Teruskan ke Luar (WhatsApp)
                 </button>
              </div>
@@ -549,7 +792,7 @@ export default function App() {
             <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
               <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2">
                 {modalConfig.type === 'group' ? <Users className="text-[#3b82f6]" size={18}/> : <User className="text-[#10b981]" size={18}/>}
-                {modalConfig.type === 'group' ? 'Buat Grup Baru' : 'Mulai Obrolan Baru'}
+                {modalConfig.type === 'group' ? 'New Group' : 'New Chat'}
               </h2>
               <button onClick={() => {setModalConfig({type:null}); setNewGroupName('');}} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
             </div>
@@ -601,7 +844,7 @@ export default function App() {
         
         <div className="absolute bottom-5 right-5 z-50">
           {showFabMenu && (
-             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-40 mb-2 origin-bottom-right animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-40 mb-2 origin-bottom-right" onClick={e => e.stopPropagation()}>
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'japri'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><User size={16} className="text-[#10b981]"/> New Chat</button>
                <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'group'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><Users size={16} className="text-[#3b82f6]"/> New Group</button>
              </div>
@@ -618,7 +861,13 @@ export default function App() {
               <div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div>
             </div>
           </div>
-          <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
+          <div className="flex items-center gap-1">
+            {/* Tombol Izin Notifikasi Luar Aplikasi */}
+            <button onClick={requestNotificationPermission} className={`p-2 rounded-xl transition-colors ${notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title={notifPermission === 'granted' ? 'Notifikasi Aktif' : 'Aktifkan Notifikasi HP/Browser'}>
+              {notifPermission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
+            </button>
+            <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
+          </div>
         </div>
         
         <div className="p-3 bg-[#0f172a] shrink-0 border-b border-[#1e293b]">
@@ -641,7 +890,7 @@ export default function App() {
              </div>
           ) : (
              filteredRooms.map(room => {
-                const unreadCount = unreadCounts[room.id] || 0; 
+                const unreadCount = room.badgeCount || 0; 
                 return (
                   <div key={room.id} className={`flex items-center p-3 mb-1 rounded-xl transition-all relative ${activeGroup?.id === room.id ? 'bg-[#1e293b] border border-[#334155]' : 'hover:bg-[#1e293b]/50 border border-transparent'}`}>
                     <div className="flex-1 flex items-center min-w-0 cursor-pointer" onClick={() => { setActiveGroup(room); setIsMobileChatOpen(true); }}>
@@ -657,7 +906,7 @@ export default function App() {
                     </div>
 
                     <div className="relative shrink-0 ml-1">
-                      <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition opacity-0 group-hover:opacity-100 lg:opacity-100">
+                      <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition">
                         <MoreVertical size={14} />
                       </button>
                       {showRoomOptions === room.id && (
@@ -701,6 +950,7 @@ export default function App() {
                 
                 {showRoomOptions === 'chat' && (
                    <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setShowGroupInfo(true); setShowRoomOptions(null); }} className="w-full text-left px-4 py-2.5 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Eye size={14}/> Info & File Obrolan</button>
                       <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Isi Chat</button>
                    </div>
                 )}
@@ -712,11 +962,11 @@ export default function App() {
               <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] shadow-sm cursor-pointer hover:bg-[#334155] transition" onClick={handlePinClick}>
                  <Star size={16} className="text-[#eab308] shrink-0" />
                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan {pinnedMessages.length > 1 ? `(${currentPinIndex + 1}/${pinnedMessages.length})` : ''}</p>
-                    <p className="text-[10px] text-[#94a3b8] truncate">{pinnedMessages[currentPinIndex].text || pinnedMessages[currentPinIndex].fileName}</p>
+                    <p className="text-xs font-bold text-[#f1f5f9] truncate">Pesan Disematkan {pinnedMessages.length > 1 ? `(${(currentPinIndex % pinnedMessages.length) + 1}/${pinnedMessages.length})` : ''}</p>
+                    <p className="text-[10px] text-[#94a3b8] truncate">{(pinnedMessages[currentPinIndex] || pinnedMessages[0]).text || (pinnedMessages[currentPinIndex] || pinnedMessages[0]).fileName}</p>
                  </div>
                  {pinnedMessages.length > 1 && (
-                    <div className="text-[10px] text-[#64748b] whitespace-nowrap bg-[#0f172a] px-2 py-1 rounded-lg">Klik untuk melihat semua</div>
+                    <div className="text-[10px] text-[#64748b] whitespace-nowrap bg-[#0f172a] px-2 py-1 rounded-lg">Ketuk untuk gilir</div>
                  )}
               </div>
             )}
@@ -744,7 +994,6 @@ export default function App() {
                 const isMenuOpen = openMenuId === msg.id;
                 const isSelected = selectedMessages.includes(msg.id);
                 
-                // CSS BUBBLE LOGIC: Whatsapp style (Tails on the first message)
                 const prevMsg = index > 0 ? filteredMessages[index - 1] : null;
                 const isSameSenderAsPrev = prevMsg && prevMsg.uid === msg.uid;
                 
@@ -755,7 +1004,21 @@ export default function App() {
                 const marginTop = isSameSenderAsPrev ? 'mt-1' : 'mt-4'; 
 
                 return (
-                  <div key={msg.id} id={`msg-${msg.id}`} className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}>
+                  <div 
+                    key={msg.id} 
+                    id={`msg-${msg.id}`} 
+                    onTouchStart={() => handleTouchStartMsg(msg.id)}
+                    onTouchEnd={handleTouchEndOrMoveMsg}
+                    onTouchMove={handleTouchEndOrMoveMsg}
+                    onContextMenu={(e) => {
+                      if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        setIsSelectionMode(true);
+                        if (!selectedMessages.includes(msg.id)) setSelectedMessages([...selectedMessages, msg.id]);
+                      }
+                    }}
+                    className={`flex items-center relative ${isMe ? 'justify-end' : 'justify-start'} ${marginTop} group`}
+                  >
                     {isSelectionMode && (
                       <div onClick={() => toggleSelection(msg.id)} className="mr-3 cursor-pointer text-[#3b82f6] shrink-0">
                         {isSelected ? <CheckSquare size={18} /> : <Square size={18} className="text-[#475569]" />}
@@ -795,16 +1058,17 @@ export default function App() {
                         )}
 
                         {isMenuOpen && (
-                          <div onClick={(e) => e.stopPropagation()} className={`absolute top-6 ${isMe ? 'right-0' : 'left-5'} bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-1.5 w-40 z-[100]`}>
+                          <div onClick={(e) => e.stopPropagation()} className={`absolute top-6 ${isMe ? 'right-0' : 'left-5'} bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-1.5 w-44 z-[100]`}>
+                            <button onClick={() => handleCopyMessages([msg])} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Copy size={12} className="text-[#10b981]" /> Salin Pesan</button>
                             <button onClick={() => togglePinMessage(msg)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Star size={12} className="text-[#eab308]" /> {msg.isPinned ? 'Lepas Sematan' : 'Sematkan Pesan'}</button>
                             <button onClick={() => {setModalConfig({type: 'forward'}); setIsSelectionMode(true); setSelectedMessages([msg.id]); setOpenMenuId(null);}} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Share2 size={12} className="text-[#3b82f6]" /> Teruskan Chat</button>
                             <button onClick={() => {setIsSelectionMode(true); setSelectedMessages([msg.id]); setOpenMenuId(null);}} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3 border-b border-[#334155]"><CheckSquare size={12} className="text-[#10b981]"/> Pilih Pesan</button>
                             {isMe && <button onClick={() => startEditing(msg)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Edit2 size={12} className="text-[#eab308]" /> Edit Pesan</button>}
-                            {(isMe || isAdmin) && <button onClick={() => handleDeleteMessage(msg.id)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={12} /> Hapus Pesan</button>}
+                            <button onClick={() => openDeleteConfirmation(msg.id)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={12} /> Hapus Pesan</button>
                           </div>
                         )}
                         
-                        {msg.text && <div dangerouslySetInnerHTML={formatText(msg.text)} className="pr-5" />}
+                        {msg.text && <div dangerouslySetInnerHTML={formatText(msg.text)} className="pr-5 select-text" />}
                         
                         <div className="flex items-center justify-end gap-1 mt-1">
                           {msg.isEdited && <span className="text-[8px] text-[#64748b] italic">diedit</span>}
@@ -820,23 +1084,23 @@ export default function App() {
             </div>
 
             {isSelectionMode ? (
-              <div className="bg-[#0f172a]/90 backdrop-blur-md px-5 py-2.5 flex justify-between items-center z-10 border-t border-[#1e293b]">
+              <div className="bg-[#0f172a]/90 backdrop-blur-md px-4 py-2.5 flex justify-between items-center z-10 border-t border-[#1e293b]">
                 <button onClick={() => { setIsSelectionMode(false); setSelectedMessages([]); }} className="text-[#94a3b8] text-xs font-bold p-2 hover:bg-[#1e293b] rounded-lg">Batal</button>
                 <div className="flex gap-2">
-                  <button onClick={() => setModalConfig({type: 'forward'})} disabled={selectedMessages.length === 0} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20 hover:bg-[#3b82f6]/20 disabled:opacity-50">
+                  <button onClick={() => handleCopyMessages(visibleMessages.filter(m => selectedMessages.includes(m.id)))} disabled={selectedMessages.length === 0} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#10b981]/10 text-[#10b981] border border-[#10b981]/20 hover:bg-[#10b981]/20 disabled:opacity-50">
+                    <Copy size={14} /> Salin
+                  </button>
+                  <button onClick={() => setModalConfig({type: 'forward'})} disabled={selectedMessages.length === 0} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20 hover:bg-[#3b82f6]/20 disabled:opacity-50">
                     <Share2 size={14} /> Teruskan
                   </button>
-                  <button onClick={() => handleDeleteMessage()} disabled={selectedMessages.length === 0} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#ef4444]/10 text-[#ef4444] border border-[#ef4444]/20 hover:bg-[#ef4444]/20 disabled:opacity-50">
+                  <button onClick={() => openDeleteConfirmation()} disabled={selectedMessages.length === 0} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#ef4444]/10 text-[#ef4444] border border-[#ef4444]/20 hover:bg-[#ef4444]/20 disabled:opacity-50">
                     <Trash2 size={14} /> Hapus
                   </button>
                 </div>
               </div>
             ) : (
               <form onSubmit={handleSendMessage} className="bg-[#0f172a]/90 backdrop-blur-md px-4 py-2.5 flex items-end gap-2 shrink-0 z-10 border-t border-[#1e293b]">
-                <input type="file" ref={fileInputRef} onChange={(e) => {
-                   const file = e.target.files[0];
-                   if(file){ setPendingUploadFile(file); setPendingPreviewUrl(file.type.startsWith('image/')?URL.createObjectURL(file):null); setUploadCaption(''); e.target.value='';}
-                }} className="hidden" />
+                <input type="file" ref={fileInputRef} onChange={handleFileSelection} className="hidden" />
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="text-[#94a3b8] hover:text-[#3b82f6] p-2.5 transition-colors bg-[#1e293b] rounded-xl border border-[#334155] mb-0.5">
                   <Paperclip size={16} />
                 </button>
@@ -883,8 +1147,8 @@ export default function App() {
             <div className="bg-[#0f172a] p-4 min-h-[300px] border-t border-[#1e293b]">
               <h3 className="text-[#f1f5f9] font-bold text-[11px] mb-3 uppercase tracking-wider flex items-center gap-1.5"><FileText size={12} className="text-[#3b82f6]"/> File Terkirim</h3>
               <div className="flex flex-col gap-2">
-                {messages.filter(m => m.fileData).length === 0 && <p className="text-[#64748b] text-[11px]">Belum ada file.</p>}
-                {messages.filter(m => m.fileData).map(m => (
+                {visibleMessages.filter(m => m.fileData).length === 0 && <p className="text-[#64748b] text-[11px]">Belum ada file.</p>}
+                {visibleMessages.filter(m => m.fileData).map(m => (
                   <div key={m.id} className="flex items-center gap-2 p-2 bg-[#1e293b] rounded-xl border border-[#334155] hover:border-[#3b82f6]/50 transition">
                     <div className="w-8 h-8 bg-[#334155] rounded-lg flex items-center justify-center shrink-0">
                       {m.isImage ? <img src={m.fileData} className="w-full h-full object-cover rounded-lg" /> : <FileText size={14} className="text-[#10b981]" />}
