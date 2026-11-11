@@ -29,7 +29,7 @@ const ADMIN_EMAIL = 'buyerfood24@gmail.com';
 // Opsional: Jika Anda mengunggah file gambar logo MD Chat ke Cloudinary atau folder public,
 // Anda bisa menempelkan URL-nya di dalam tanda kutip di bawah ini. Jika dikosongkan, sistem
 // otomatis memakai replika SVG Neon MD Chat berkualitas tinggi di bawahnya.
-const CUSTOM_LOGO_IMAGE_URL = 'https://res.cloudinary.com/m8cnadmw/image/upload/v1794384943/dbac7vi6chcm05tblspn.jpg';
+const CUSTOM_LOGO_IMAGE_URL = 'https://res.cloudinary.com/m8cnadmw/image/upload/v1794388145/khqdyezi9qhiiedndlg7.jpg';
 
 // REPLIKA SVG NEON CYBERPUNK "MD CHAT" (SESUAI GAMBAR LOGO ANDA)
 const MD_CHAT_LOGO_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(`
