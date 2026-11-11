@@ -1,25 +1,25 @@
 {
-    "name": "MD Chat Enterprise",
-    "short_name": "MD Chat",
-    "description": "Enterprise Real-Time Communication",
-    "start_url": "/",
-    "scope": "/",
-    "display": "standalone",
-    "background_color": "#070b14",
-    "theme_color": "#0f172a",
-    "orientation": "portrait",
-    "icons": [
-      {
-        "src": "https://api.dicebear.com/7.x/initials/png?seed=MD&backgroundColor=0f172a&fontFamily=Arial&fontWeight=700&size=192",
-        "sizes": "192x192",
-        "type": "image/png",
-        "purpose": "any maskable"
-      },
-      {
-        "src": "https://api.dicebear.com/7.x/initials/png?seed=MD&backgroundColor=0f172a&fontFamily=Arial&fontWeight=700&size=512",
-        "sizes": "512x512",
-        "type": "image/png",
-        "purpose": "any maskable"
-      }
-    ]
-  }
+  "name": "MD Chat Enterprise",
+  "short_name": "MD Chat",
+  "description": "Enterprise Real-Time Communication",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://res.cloudinary.com/m8cnadmw/image/upload/v1794384943/dbac7vi6chcm05tblspn.jpg",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://res.cloudinary.com/m8cnadmw/image/upload/v1794384943/dbac7vi6chcm05tblspn.jpg",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
