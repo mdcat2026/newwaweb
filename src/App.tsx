@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment, arrayUnion } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, Copy, Bell, BellOff } from 'lucide-react';
+import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, Copy, Bell, BellOff, Volume2, VolumeX, Pin } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -53,7 +53,7 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  const [modalConfig, setModalConfig] = useState({ type: null }); 
+  const [modalConfig, setModalConfig] = useState({ type: null }); // 'group', 'japri', 'forward', 'notifSettings'
   const [newGroupName, setNewGroupName] = useState('');
   const [forwardTargets, setForwardTargets] = useState([]); 
   
@@ -72,6 +72,22 @@ export default function App() {
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
 
+  // STATE PENGATURAN NOTIFIKASI LENGKAP (TERSIMPAN DI PERANGKAT)
+  const [notifSettings, setNotifSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nexus_notif_settings');
+      return saved ? JSON.parse(saved) : {
+        enabled: true,
+        targetDevice: 'both', // 'both' | 'mobile' | 'desktop'
+        soundEnabled: true,
+        volume: 80, // 0 - 100
+        vibrateEnabled: true
+      };
+    } catch (e) {
+      return { enabled: true, targetDevice: 'both', soundEnabled: true, volume: 80, vibrateEnabled: true };
+    }
+  });
+
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const groupPhotoInputRef = useRef(null);
@@ -83,49 +99,102 @@ export default function App() {
   const isInitialLoadRef = useRef(true);
   const navStateRef = useRef({});
   const swRegistrationRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const notifSettingsRef = useRef(notifSettings);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  useEffect(() => {
+    notifSettingsRef.current = notifSettings;
+    try {
+      localStorage.setItem('nexus_notif_settings', JSON.stringify(notifSettings));
+    } catch (e) {}
+  }, [notifSettings]);
 
   const showToast = (msg) => {
     setSysToast(msg);
     setTimeout(() => setSysToast(null), 2500);
   };
 
-  // 1. REGISTRASI INLINE SERVICE WORKER UNTUK NOTIFIKASI MOBILE (ANDROID/IOS PWA)
+  // UNLOCK AUDIO CONTEXT SAAT SENTUHAN PERTAMA DI HP
+  useEffect(() => {
+    const unlockAudio = () => {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext && !audioCtxRef.current) {
+          audioCtxRef.current = new AudioContext();
+        }
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume();
+        }
+      } catch (e) {}
+    };
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
+    window.addEventListener('click', unlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', unlockAudio);
+      window.removeEventListener('click', unlockAudio);
+    };
+  }, []);
+
+  // FUNGSI NADA DERING SYNTHESIZER (ANTI-BLOKIR DI HP & MENDUKUNG PENGATUR VOLUME)
+  const playNotificationSound = (customVol = null) => {
+    const cfg = notifSettingsRef.current;
+    if (!cfg.soundEnabled && customVol === null) return;
+    const vol = (customVol !== null ? customVol : cfg.volume) / 100;
+    if (vol <= 0) return;
+
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtxRef.current && AudioContext) {
+        audioCtxRef.current = new AudioContext();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx) {
+        if (ctx.state === 'suspended') ctx.resume();
+        const now = ctx.currentTime;
+        // Nada 1
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(587.33, now); // D5
+        osc1.frequency.setValueAtTime(880, now + 0.12); // A5
+        gain1.gain.setValueAtTime(vol * 0.6, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.45);
+        return;
+      }
+    } catch (e) {}
+
+    try {
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
+      audio.volume = Math.min(1, Math.max(0, vol));
+      audio.play().catch(() => {});
+    } catch (e) {}
+  };
+
+  // REGISTRASI SERVICE WORKER (/sw.js FISIK + FALLBACK) UNTUK NOTIFIKASI ANDROID/IOS
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      const swCode = `
-        self.addEventListener('install', (e) => self.skipWaiting());
-        self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
-        self.addEventListener('notificationclick', (e) => {
-          e.notification.close();
-          e.waitUntil(
-            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-              if (clientList.length > 0) {
-                let client = clientList[0];
-                for (let i = 0; i < clientList.length; i++) {
-                  if (clientList[i].focused) client = clientList[i];
-                }
-                return client.focus();
-              }
-              return self.clients.openWindow('/');
-            })
-          );
-        });
-      `;
-      try {
-        const blob = new Blob([swCode], { type: 'application/javascript' });
-        const swUrl = URL.createObjectURL(blob);
-        navigator.serviceWorker.register(swUrl).then((reg) => {
-          swRegistrationRef.current = reg;
-        }).catch(() => {
-          navigator.serviceWorker.ready.then((reg) => {
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        swRegistrationRef.current = reg;
+      }).catch(() => {
+        // Fallback jika /sw.js belum dibuat
+        try {
+          const swCode = `
+            self.addEventListener('install', (e) => self.skipWaiting());
+            self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+            self.addEventListener('notificationclick', (e) => { e.notification.close(); });
+          `;
+          const blob = new Blob([swCode], { type: 'application/javascript' });
+          navigator.serviceWorker.register(URL.createObjectURL(blob)).then((reg) => {
             swRegistrationRef.current = reg;
           }).catch(() => {});
-        });
-      } catch (e) {
-        console.log("SW Inline fallback:", e);
-      }
+        } catch (e) {}
+      });
     }
   }, []);
 
@@ -194,63 +263,92 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // FUNGSI IZIN & PEMICU NOTIFIKASI OS (MENDUKUNG DESKTOP & MOBILE HP)
+  // FUNGSI IZIN & PEMICU NOTIFIKASI OS (HP & DESKTOP)
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
-      alert("Browser di perangkat ini tidak mendukung notifikasi sistem.");
+      alert("Browser di perangkat ini tidak mendukung notifikasi sistem. Jika di iPhone, wajib 'Add to Home Screen' terlebih dahulu.");
       return;
     }
     const perm = await Notification.requestPermission();
     setNotifPermission(perm);
     if (perm === 'granted') {
-      showToast("Notifikasi HP & Desktop Aktif!");
-      triggerExternalNotification("Nexus Chat", "Notifikasi berhasil diaktifkan di perangkat ini!", user?.photoURL);
+      showToast("Izin Notifikasi Sistem Aktif!");
+      triggerExternalNotification("Nexus Chat", "Notifikasi HP & Desktop berhasil diaktifkan!", user?.photoURL, true);
     } else {
-      showToast("Izin notifikasi ditolak oleh browser.");
+      showToast("Izin notifikasi ditolak di pengaturan browser.");
     }
   };
 
-  const triggerExternalNotification = async (roomName, messageText, avatarUrl) => {
+  const triggerExternalNotification = async (roomName, messageText, avatarUrl, isTest = false) => {
+    const cfg = notifSettingsRef.current;
+    if (!cfg.enabled && !isTest) return;
+
+    // Cek filter target perangkat (HP vs Desktop)
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+    if (!isTest) {
+      if (cfg.targetDevice === 'mobile' && !isMobileDevice) return;
+      if (cfg.targetDevice === 'desktop' && isMobileDevice) return;
+    }
+
+    // Mainkan nada dering & getar sesuai pengaturan
+    if (cfg.soundEnabled || isTest) {
+      playNotificationSound();
+    }
+    if ((cfg.vibrateEnabled || isTest) && navigator.vibrate) {
+      try { navigator.vibrate([200, 100, 200]); } catch (e) {}
+    }
+
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
     const options = {
       body: messageText || 'Mengirim lampiran file...',
       icon: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
       badge: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
-      tag: roomName,
+      tag: isTest ? 'nexus-test-' + Date.now() : roomName,
       renotify: true,
-      vibrate: [200, 100, 200]
+      silent: false,
+      vibrate: cfg.vibrateEnabled ? [200, 100, 200] : []
     };
 
     try {
-      // Prioritas 1: Gunakan Service Worker (Wajib untuk Chrome Android / Mobile PWA)
-      if (swRegistrationRef.current && swRegistrationRef.current.showNotification) {
-        await swRegistrationRef.current.showNotification(roomName, options);
-      } else if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
+      if ('serviceWorker' in navigator) {
+        const reg = swRegistrationRef.current || await navigator.serviceWorker.getRegistration();
         if (reg && reg.showNotification) {
           await reg.showNotification(roomName, options);
-        } else {
-          const notif = new Notification(roomName, options);
-          notif.onclick = () => { window.focus(); notif.close(); };
+          return;
         }
-      } else {
-        // Prioritas 2: Fallback Desktop Notification standar
-        const notif = new Notification(roomName, options);
-        notif.onclick = () => { window.focus(); notif.close(); };
       }
+      const notif = new Notification(roomName, options);
+      notif.onclick = () => { window.focus(); notif.close(); };
     } catch (err) {
       try {
         const notif = new Notification(roomName, options);
         notif.onclick = () => { window.focus(); notif.close(); };
       } catch (e) {}
     }
+  };
 
+  // FUNGSI PIN PERCAKAPAN & MUTE NOTIFIKASI PER AKUN DI HOME PAGE
+  const togglePinRoom = async (room) => {
+    const isPinned = room.pinnedBy?.includes(user.uid);
     try {
-      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
-      audio.volume = 0.5;
-      audio.play().catch(() => {});
+      await updateDoc(doc(db, 'chatRooms', room.id), {
+        pinnedBy: isPinned ? arrayRemove(user.uid) : arrayUnion(user.uid)
+      });
+      showToast(isPinned ? "Sematan obrolan dilepas" : "Obrolan disematkan ke atas");
     } catch (e) {}
+    setShowRoomOptions(null);
+  };
+
+  const toggleMuteRoom = async (room) => {
+    const isMuted = room.mutedBy?.includes(user.uid);
+    try {
+      await updateDoc(doc(db, 'chatRooms', room.id), {
+        mutedBy: isMuted ? arrayRemove(user.uid) : arrayUnion(user.uid)
+      });
+      showToast(isMuted ? `Notifikasi ${room.displayName} diaktifkan` : `Notifikasi ${room.displayName} dibisukan`);
+    } catch (e) {}
+    setShowRoomOptions(null);
   };
 
   useEffect(() => {
@@ -274,7 +372,7 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
-  // LISTEN DAFTAR CHAT, UNREAD DATABASE, & NOTIFIKASI LUAR APLIKASI
+  // LISTEN DAFTAR CHAT, PIN SORTING, MUTE FILTER, & NOTIFIKASI LUAR APLIKASI
   useEffect(() => {
     if (!user) return;
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
@@ -300,6 +398,9 @@ export default function App() {
               room.displayName = room.name;
            }
            
+           room.isPinnedRoom = room.pinnedBy?.includes(user.uid) || false;
+           room.isMutedRoom = room.mutedBy?.includes(user.uid) || false;
+
            const isMobile = window.innerWidth <= 768;
            const isRoomActivelyViewed = activeGroup?.id === room.id && (!isMobile || isMobileChatOpen) && document.visibilityState === 'visible';
            room.badgeCount = isRoomActivelyViewed ? 0 : (room.unreadCount?.[user.uid] || 0);
@@ -307,8 +408,8 @@ export default function App() {
 
            const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
            if (!isInitialLoadRef.current && msgTimeStr && lastNotifiedRef.current[room.id] !== msgTimeStr) {
-              if (room.lastSenderId && room.lastSenderId !== user.uid && room.lastMessage) {
-                 // Pemicu Notifikasi HP/Desktop jika layar mati, pindah tab, atau sedang di ruang chat lain
+              // Hanya bunyikan notifikasi jika pengirimnya orang lain DAN room tersebut TIDAK di-mute
+              if (room.lastSenderId && room.lastSenderId !== user.uid && room.lastMessage && !room.isMutedRoom) {
                  if (document.visibilityState !== 'visible' || !document.hasFocus() || !isRoomActivelyViewed) {
                     triggerExternalNotification(room.displayName, room.lastMessage, room.displayAvatar);
                  }
@@ -322,6 +423,15 @@ export default function App() {
         }
       });
       
+      // Urutkan agar percakapan yang di-Pin selalu berada di paling atas
+      processedRooms.sort((a, b) => {
+        if (a.isPinnedRoom && !b.isPinnedRoom) return -1;
+        if (!a.isPinnedRoom && b.isPinnedRoom) return 1;
+        const timeA = a.lastMessageTime?.toMillis?.() || 0;
+        const timeB = b.lastMessageTime?.toMillis?.() || 0;
+        return timeB - timeA;
+      });
+
       isInitialLoadRef.current = false;
       setChatRooms(processedRooms);
 
@@ -401,7 +511,6 @@ export default function App() {
     setOpenMenuId(null);
   };
 
-  // 2 & 3. FUNGSI SINKRONISASI PRATINJAU SIDEBAR SETELAH PESAN DIHAPUS
   const syncSidebarLastMessage = async (roomId, remainingMessages) => {
     if (!roomId) return;
     if (!remainingMessages || remainingMessages.length === 0) {
@@ -476,7 +585,7 @@ export default function App() {
     const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`;
     const newRoom = await addDoc(collection(db, 'chatRooms'), {
       name: newGroupName, type: 'group', avatar: avatarUrl,
-      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: allMemberUids, unreadCount: {}
+      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: allMemberUids, unreadCount: {}, pinnedBy: [], mutedBy: []
     });
     setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: avatarUrl, displayAvatar: avatarUrl, type: 'group', participants: allMemberUids });
     setModalConfig({ type: null }); setNewGroupName(''); setIsMobileChatOpen(true);
@@ -492,7 +601,7 @@ export default function App() {
         createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
         participants: [user.uid, targetUser.uid], 
         participantNames: [user.displayName, targetUser.name],
-        unreadCount: {}
+        unreadCount: {}, pinnedBy: [], mutedBy: []
       });
       setActiveGroup({ id: newRoom.id, name: 'Private', displayName: targetUser.name, avatar: targetUser.photo, displayAvatar: targetUser.photo, type: 'private', participants: [user.uid, targetUser.uid] });
     }
@@ -634,7 +743,7 @@ export default function App() {
             const newRoom = await addDoc(collection(db, 'chatRooms'), {
               name: `Private`, type: 'private',
               createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, 
-              participants: [user.uid, target.uid], participantNames: [user.displayName, target.name], unreadCount: {}
+              participants: [user.uid, target.uid], participantNames: [user.displayName, target.name], unreadCount: {}, pinnedBy: [], mutedBy: []
             });
             roomId = newRoom.id;
             targetParticipants = [user.uid, target.uid];
@@ -774,7 +883,6 @@ export default function App() {
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
-  // 3. ATURAN HAPUS UNTUK SEMUA ORANG: Berlaku untuk semua akun jika pesan yang dipilih adalah pesan miliknya sendiri (m.uid === user.uid)
   const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.length > 0 && deleteModalTargets.every(m => m.uid === user.uid);
 
   return (
@@ -785,6 +893,140 @@ export default function App() {
       {sysToast && (
         <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[1000] bg-[#1e293b] border border-[#3b82f6]/50 text-[#f1f5f9] px-4 py-2 rounded-full shadow-2xl text-xs font-medium pointer-events-none animate-bounce">
           {sysToast}
+        </div>
+      )}
+
+      {/* MODAL PENGATURAN NOTIFIKASI LENGKAP (ON/OFF, HP/DESKTOP, VOLUME, GETAR) */}
+      {modalConfig.type === 'notifSettings' && (
+        <div className="fixed inset-0 z-[750] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setModalConfig({ type: null })}>
+          <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
+              <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2">
+                <Bell className="text-[#10b981]" size={18}/> Pengaturan Notifikasi
+              </h2>
+              <button onClick={() => setModalConfig({ type: null })} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4 overflow-y-auto max-h-[80vh] hide-scroll">
+              {/* Status Izin Browser */}
+              <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#334155] flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-[#f1f5f9]">Izin Browser / Sistem HP</p>
+                  <p className="text-[11px] text-[#94a3b8] mt-0.5">
+                    Status: <span className={notifPermission === 'granted' ? 'text-[#10b981] font-bold' : 'text-[#eab308] font-bold'}>
+                      {notifPermission === 'granted' ? 'Diizinkan (Aktif)' : 'Belum Diizinkan'}
+                    </span>
+                  </p>
+                </div>
+                {notifPermission !== 'granted' ? (
+                  <button onClick={requestNotificationPermission} className="bg-[#10b981] hover:bg-[#059669] text-white text-xs font-bold px-3 py-2 rounded-lg transition">
+                    Izinkan
+                  </button>
+                ) : (
+                  <button onClick={() => triggerExternalNotification("Tes Notifikasi Nexus", "Suara, getar, dan pop-up berjalan lancar!", user?.photoURL, true)} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs font-bold px-3 py-2 rounded-lg transition">
+                    Tes Notif
+                  </button>
+                )}
+              </div>
+
+              {/* Sakelar Utama On/Off Notifikasi */}
+              <div className="flex items-center justify-between px-1">
+                <div>
+                  <p className="text-sm font-semibold text-[#f1f5f9]">Aktifkan Notifikasi Pesan</p>
+                  <p className="text-xs text-[#64748b]">Matikan jika tidak ingin diganggu</p>
+                </div>
+                <button
+                  onClick={() => setNotifSettings(prev => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`w-12 h-6 rounded-full transition-colors p-1 flex items-center ${notifSettings.enabled ? 'bg-[#10b981] justify-end' : 'bg-[#334155] justify-start'}`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-white shadow-md"></div>
+                </button>
+              </div>
+
+              {/* Pilihan Target Perangkat: HP / Desktop / Keduanya */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider">Aktifkan Pada Perangkat:</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'both', label: 'HP & Desktop' },
+                    { id: 'mobile', label: 'Hanya HP' },
+                    { id: 'desktop', label: 'Hanya Desktop' }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setNotifSettings(prev => ({ ...prev, targetDevice: opt.id }))}
+                      className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition ${
+                        notifSettings.targetDevice === opt.id
+                          ? 'bg-[#3b82f6]/20 border-[#3b82f6] text-[#3b82f6]'
+                          : 'bg-[#0f172a] border-[#334155] text-[#94a3b8] hover:bg-[#334155]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pengaturan Suara & Volume Nada Dering */}
+              <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {notifSettings.soundEnabled ? <Volume2 size={18} className="text-[#3b82f6]"/> : <VolumeX size={18} className="text-[#64748b]"/>}
+                    <span className="text-xs font-bold text-[#f1f5f9]">Nada Dering Notifikasi</span>
+                  </div>
+                  <button
+                    onClick={() => setNotifSettings(prev => ({ ...prev, soundEnabled: !prev.soundEnabled }))}
+                    className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${notifSettings.soundEnabled ? 'bg-[#3b82f6] justify-end' : 'bg-[#334155] justify-start'}`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-white"></div>
+                  </button>
+                </div>
+
+                {notifSettings.soundEnabled && (
+                  <div className="flex flex-col gap-1.5 mt-1">
+                    <div className="flex justify-between text-[11px] text-[#94a3b8]">
+                      <span>Volume Nada Dering</span>
+                      <span className="font-bold text-[#3b82f6]">{notifSettings.volume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={notifSettings.volume}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setNotifSettings(prev => ({ ...prev, volume: val }));
+                      }}
+                      onMouseUp={() => playNotificationSound(notifSettings.volume)}
+                      onTouchEnd={() => playNotificationSound(notifSettings.volume)}
+                      className="w-full accent-[#3b82f6] cursor-pointer"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Pengaturan Getar (Vibrate) Khusus HP */}
+              <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#334155] flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Smartphone size={18} className={notifSettings.vibrateEnabled ? 'text-[#10b981]' : 'text-[#64748b]'} />
+                  <div>
+                    <p className="text-xs font-bold text-[#f1f5f9]">Getar Saat Pesan Masuk (HP)</p>
+                    <p className="text-[10px] text-[#64748b]">Bergetar ketika notifikasi muncul di Android</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const nextVal = !notifSettings.vibrateEnabled;
+                    setNotifSettings(prev => ({ ...prev, vibrateEnabled: nextVal }));
+                    if (nextVal && navigator.vibrate) navigator.vibrate(150);
+                  }}
+                  className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${notifSettings.vibrateEnabled ? 'bg-[#10b981] justify-end' : 'bg-[#334155] justify-start'}`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-white"></div>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -881,7 +1123,7 @@ export default function App() {
       )}
 
       {/* POP-UP BUAT GRUP / JAPRI */}
-      {modalConfig.type && modalConfig.type !== 'forward' && (
+      {(modalConfig.type === 'group' || modalConfig.type === 'japri') && (
         <div className="fixed inset-0 z-[400] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
             <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
@@ -957,8 +1199,9 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={requestNotificationPermission} className={`p-2 rounded-xl transition-colors ${notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title={notifPermission === 'granted' ? 'Notifikasi Aktif (Klik untuk tes)' : 'Aktifkan Notifikasi HP/Browser'}>
-              {notifPermission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
+            {/* Tombol Buka Pengaturan Notifikasi */}
+            <button onClick={(e) => { e.stopPropagation(); setModalConfig({ type: 'notifSettings' }); }} className={`p-2 rounded-xl transition-colors ${notifSettings.enabled && notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title="Pengaturan Notifikasi">
+              {notifSettings.enabled && notifPermission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
             </button>
             <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
           </div>
@@ -993,19 +1236,33 @@ export default function App() {
                         {room.type === 'private' && <div className="absolute -bottom-0.5 -right-0.5 bg-[#10b981] w-3 h-3 rounded-full border-2 border-[#0f172a]"></div>}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.displayName}</h3>
+                        <div className="flex items-center gap-1.5">
+                          <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.displayName}</h3>
+                          {room.isPinnedRoom && <Pin size={12} className="text-[#3b82f6] shrink-0 rotate-45" />}
+                          {room.isMutedRoom && <BellOff size={12} className="text-[#64748b] shrink-0" />}
+                        </div>
                         <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Belum ada pesan'}</p>
                       </div>
-                      {unreadCount > 0 && <div className="min-w-[20px] h-5 px-1.5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount > 99 ? '99+' : unreadCount}</div>}
+                      {unreadCount > 0 && <div className={`min-w-[20px] h-5 px-1.5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0 ${room.isMutedRoom ? 'bg-[#64748b]' : 'bg-[#3b82f6]'}`}>{unreadCount > 99 ? '99+' : unreadCount}</div>}
                     </div>
 
+                    {/* MENU TITIK 3 DI HOME PAGE (PIN PERCAKAPAN, MUTE AKUN, HAPUS OBROLAN) */}
                     <div className="relative shrink-0 ml-1">
                       <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition">
                         <MoreVertical size={14} />
                       </button>
                       {showRoomOptions === room.id && (
-                        <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-40 z-[200]" onClick={e => e.stopPropagation()}>
-                           <button onClick={(e) => { e.stopPropagation(); handleDeleteRoom(room.id); }} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2"><Trash2 size={12}/> Hapus Obrolan</button>
+                        <div className="absolute top-8 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-1.5 w-48 z-[200]" onClick={e => e.stopPropagation()}>
+                           <button onClick={() => togglePinRoom(room)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-2.5">
+                             <Pin size={13} className="text-[#3b82f6]" /> {room.isPinnedRoom ? 'Lepas Sematan Chat' : 'Sematkan Percakapan'}
+                           </button>
+                           <button onClick={() => toggleMuteRoom(room)} className="w-full text-left px-4 py-2 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-2.5 border-b border-[#334155]">
+                             {room.isMutedRoom ? <Bell size={13} className="text-[#10b981]" /> : <BellOff size={13} className="text-[#eab308]" />}
+                             {room.isMutedRoom ? 'Nyalakan Notifikasi' : 'Matikan Notifikasi'}
+                           </button>
+                           <button onClick={() => handleDeleteRoom(room.id)} className="w-full text-left px-4 py-2 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-2.5">
+                             <Trash2 size={13}/> Hapus Obrolan
+                           </button>
                         </div>
                       )}
                     </div>
