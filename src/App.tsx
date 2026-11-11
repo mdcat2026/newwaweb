@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc, setDoc, increment, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, Copy, Bell, BellOff, Volume2, VolumeX, Pin } from 'lucide-react';
+import { Send, LogOut, Paperclip, Search, CheckCheck, FileText, ArrowLeft, Download, ChevronDown, Trash2, Edit2, Share2, X, Users, User, CheckSquare, Square, MessageSquare, Edit3, Camera, Plus, MoreVertical, Eye, Smartphone, Star, Copy, Bell, BellOff, Volume2, VolumeX, Pin, UserPlus, UserMinus, Mail, Link2, ShieldAlert, Loader2 } from 'lucide-react';
 
 // ==========================================
 // 1. TEMPEL FIREBASE CONFIG ANDA DI SINI
@@ -25,6 +25,48 @@ const firebaseConfig = {
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
 const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
 const ADMIN_EMAIL = 'buyerfood24@gmail.com'; 
+
+// Opsional: Jika Anda mengunggah file gambar logo MD Chat ke Cloudinary atau folder public,
+// Anda bisa menempelkan URL-nya di dalam tanda kutip di bawah ini. Jika dikosongkan, sistem
+// otomatis memakai replika SVG Neon MD Chat berkualitas tinggi di bawahnya.
+const CUSTOM_LOGO_IMAGE_URL = 'https://res.cloudinary.com/m8cnadmw/image/upload/v1794384943/dbac7vi6chcm05tblspn.jpg';
+
+// REPLIKA SVG NEON CYBERPUNK "MD CHAT" (SESUAI GAMBAR LOGO ANDA)
+const MD_CHAT_LOGO_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="neonCyanPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="50%" stop-color="#4facfe"/>
+      <stop offset="100%" stop-color="#c471ed"/>
+    </linearGradient>
+    <linearGradient id="neonPinkBlue" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <rect width="240" height="240" rx="52" fill="#070b14"/>
+  <circle cx="120" cy="112" r="78" fill="#0f172a" stroke="url(#neonCyanPurple)" stroke-width="3.5" opacity="0.9"/>
+  <circle cx="120" cy="112" r="66" fill="none" stroke="url(#neonPinkBlue)" stroke-width="1.5" stroke-dasharray="18 8 6 8" opacity="0.65"/>
+  <!-- Huruf M Neon -->
+  <path d="M52 146 V76 L84 116 L116 76 V146" fill="none" stroke="url(#neonCyanPurple)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <!-- Huruf D berbentuk Balon Chat + Ekor Kanan Bawah -->
+  <path d="M122 76 H150 C174 76 190 92 190 111 C190 126 180 138 166 143 L178 164 L152 146 H122 Z" fill="#0f172a" stroke="url(#neonPinkBlue)" stroke-width="12" stroke-linejoin="round" filter="url(#glow)"/>
+  <!-- 3 Titik Chat di dalam D -->
+  <circle cx="142" cy="111" r="4.5" fill="#38bdf8"/>
+  <circle cx="155" cy="111" r="4.5" fill="#818cf8"/>
+  <circle cx="168" cy="111" r="4.5" fill="#e879f9"/>
+  <!-- Teks MD CHAT -->
+  <text x="82" y="216" font-family="Arial, sans-serif" font-weight="900" font-size="27" fill="url(#neonCyanPurple)" letter-spacing="1.5">MD</text>
+  <text x="132" y="216" font-family="Arial, sans-serif" font-weight="900" font-size="27" fill="#ffffff" letter-spacing="1.5">CHAT</text>
+</svg>
+`)}`;
+
+const APP_LOGO = CUSTOM_LOGO_IMAGE_URL || MD_CHAT_LOGO_SVG;
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -53,9 +95,10 @@ export default function App() {
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showRoomOptions, setShowRoomOptions] = useState(null); 
   
-  const [modalConfig, setModalConfig] = useState({ type: null }); // 'group', 'japri', 'forward', 'notifSettings'
+  const [modalConfig, setModalConfig] = useState({ type: null }); 
   const [newGroupName, setNewGroupName] = useState('');
   const [forwardTargets, setForwardTargets] = useState([]); 
+  const [inviteEmail, setInviteEmail] = useState('');
   
   const [previewMedia, setPreviewMedia] = useState(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -72,15 +115,14 @@ export default function App() {
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
 
-  // STATE PENGATURAN NOTIFIKASI LENGKAP (TERSIMPAN DI PERANGKAT)
   const [notifSettings, setNotifSettings] = useState(() => {
     try {
       const saved = localStorage.getItem('nexus_notif_settings');
       return saved ? JSON.parse(saved) : {
         enabled: true,
-        targetDevice: 'both', // 'both' | 'mobile' | 'desktop'
+        targetDevice: 'both',
         soundEnabled: true,
-        volume: 80, // 0 - 100
+        volume: 80,
         vibrateEnabled: true
       };
     } catch (e) {
@@ -101,8 +143,29 @@ export default function App() {
   const swRegistrationRef = useRef(null);
   const audioCtxRef = useRef(null);
   const notifSettingsRef = useRef(notifSettings);
+  const uploadingLockRef = useRef(false);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // OTOMATIS PASANG FAVICON, TITLE & LOGO "MD CHAT" DI BROWSER DAN HOME SCREEN HP
+  useEffect(() => {
+    try {
+      document.title = 'MD Chat';
+      const existingIcons = document.querySelectorAll("link[rel*='icon'], link[rel='apple-touch-icon']");
+      existingIcons.forEach(el => el.parentNode?.removeChild(el));
+
+      const link = document.createElement('link');
+      link.type = CUSTOM_LOGO_IMAGE_URL ? 'image/png' : 'image/svg+xml';
+      link.rel = 'icon';
+      link.href = APP_LOGO;
+      document.head.appendChild(link);
+
+      const appleLink = document.createElement('link');
+      appleLink.rel = 'apple-touch-icon';
+      appleLink.href = APP_LOGO;
+      document.head.appendChild(appleLink);
+    } catch (e) {}
+  }, []);
 
   useEffect(() => {
     notifSettingsRef.current = notifSettings;
@@ -113,10 +176,9 @@ export default function App() {
 
   const showToast = (msg) => {
     setSysToast(msg);
-    setTimeout(() => setSysToast(null), 2500);
+    setTimeout(() => setSysToast(null), 2600);
   };
 
-  // UNLOCK AUDIO CONTEXT SAAT SENTUHAN PERTAMA DI HP
   useEffect(() => {
     const unlockAudio = () => {
       try {
@@ -137,7 +199,6 @@ export default function App() {
     };
   }, []);
 
-  // FUNGSI NADA DERING SYNTHESIZER (ANTI-BLOKIR DI HP & MENDUKUNG PENGATUR VOLUME)
   const playNotificationSound = (customVol = null) => {
     const cfg = notifSettingsRef.current;
     if (!cfg.soundEnabled && customVol === null) return;
@@ -153,12 +214,11 @@ export default function App() {
       if (ctx) {
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
-        // Nada 1
         const osc1 = ctx.createOscillator();
         const gain1 = ctx.createGain();
         osc1.type = 'sine';
-        osc1.frequency.setValueAtTime(587.33, now); // D5
-        osc1.frequency.setValueAtTime(880, now + 0.12); // A5
+        osc1.frequency.setValueAtTime(587.33, now);
+        osc1.frequency.setValueAtTime(880, now + 0.12);
         gain1.gain.setValueAtTime(vol * 0.6, now);
         gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
         osc1.connect(gain1);
@@ -176,13 +236,11 @@ export default function App() {
     } catch (e) {}
   };
 
-  // REGISTRASI SERVICE WORKER (/sw.js FISIK + FALLBACK) UNTUK NOTIFIKASI ANDROID/IOS
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').then((reg) => {
         swRegistrationRef.current = reg;
       }).catch(() => {
-        // Fallback jika /sw.js belum dibuat
         try {
           const swCode = `
             self.addEventListener('install', (e) => self.skipWaiting());
@@ -198,7 +256,6 @@ export default function App() {
     }
   }, []);
 
-  // SINKRONISASI STATE KE REF UNTUK HANDLER TOMBOL BACK HP
   useEffect(() => {
     navStateRef.current = {
       previewMedia,
@@ -212,41 +269,42 @@ export default function App() {
     };
   }, [previewMedia, pendingUploadFile, deleteModalTargets, modalConfig.type, isSelectionMode, showGroupInfo, showChatSearch, isMobileChatOpen]);
 
-  // FITUR TOMBOL BACK HP & DOUBLE KLIK UNTUK KELUAR
   useEffect(() => {
-    window.history.pushState({ page: 'nexus_root' }, '');
+    window.history.pushState({ page: 'md_chat_root' }, '');
 
     const handlePopState = () => {
       const s = navStateRef.current;
 
       if (s.previewMedia) {
         setPreviewMedia(null);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.pendingUploadFile) {
-        setPendingUploadFile(null);
-        setPendingPreviewUrl(null);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        if (!uploadingLockRef.current) {
+          setPendingUploadFile(null);
+          setPendingPreviewUrl(null);
+        }
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.deleteModalTargets) {
         setDeleteModalTargets(null);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.modalType) {
         setModalConfig({ type: null });
         setForwardTargets([]);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.isSelectionMode) {
         setIsSelectionMode(false);
         setSelectedMessages([]);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.showGroupInfo) {
         setShowGroupInfo(false);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.showChatSearch) {
         setShowChatSearch(false);
         setChatSearch('');
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else if (s.isMobileChatOpen) {
         setIsMobileChatOpen(false);
-        window.history.pushState({ page: 'nexus_root' }, '');
+        window.history.pushState({ page: 'md_chat_root' }, '');
       } else {
         const now = Date.now();
         if (now - lastBackPressRef.current < 2000) {
@@ -254,7 +312,7 @@ export default function App() {
         } else {
           lastBackPressRef.current = now;
           showToast("Tekan kembali sekali lagi untuk keluar aplikasi");
-          window.history.pushState({ page: 'nexus_root' }, '');
+          window.history.pushState({ page: 'md_chat_root' }, '');
         }
       }
     };
@@ -263,17 +321,16 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // FUNGSI IZIN & PEMICU NOTIFIKASI OS (HP & DESKTOP)
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
-      alert("Browser di perangkat ini tidak mendukung notifikasi sistem. Jika di iPhone, wajib 'Add to Home Screen' terlebih dahulu.");
+      alert("Browser di perangkat ini tidak mendukung notifikasi sistem.");
       return;
     }
     const perm = await Notification.requestPermission();
     setNotifPermission(perm);
     if (perm === 'granted') {
       showToast("Izin Notifikasi Sistem Aktif!");
-      triggerExternalNotification("Nexus Chat", "Notifikasi HP & Desktop berhasil diaktifkan!", user?.photoURL, true);
+      triggerExternalNotification("MD Chat", "Notifikasi Pop-up & Suara berhasil diaktifkan!", APP_LOGO, true);
     } else {
       showToast("Izin notifikasi ditolak di pengaturan browser.");
     }
@@ -283,31 +340,31 @@ export default function App() {
     const cfg = notifSettingsRef.current;
     if (!cfg.enabled && !isTest) return;
 
-    // Cek filter target perangkat (HP vs Desktop)
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
     if (!isTest) {
       if (cfg.targetDevice === 'mobile' && !isMobileDevice) return;
       if (cfg.targetDevice === 'desktop' && isMobileDevice) return;
     }
 
-    // Mainkan nada dering & getar sesuai pengaturan
     if (cfg.soundEnabled || isTest) {
       playNotificationSound();
     }
     if ((cfg.vibrateEnabled || isTest) && navigator.vibrate) {
-      try { navigator.vibrate([200, 100, 200]); } catch (e) {}
+      try { navigator.vibrate([300, 100, 300, 100, 400]); } catch (e) {}
     }
 
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
     const options = {
       body: messageText || 'Mengirim lampiran file...',
-      icon: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
-      badge: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
-      tag: isTest ? 'nexus-test-' + Date.now() : roomName,
+      icon: avatarUrl || APP_LOGO,
+      badge: APP_LOGO,
+      tag: `mdchat-msg-${Date.now()}`,
       renotify: true,
+      requireInteraction: true,
       silent: false,
-      vibrate: cfg.vibrateEnabled ? [200, 100, 200] : []
+      timestamp: Date.now(),
+      vibrate: cfg.vibrateEnabled ? [300, 100, 300, 100, 400] : [200]
     };
 
     try {
@@ -328,7 +385,6 @@ export default function App() {
     }
   };
 
-  // FUNGSI PIN PERCAKAPAN & MUTE NOTIFIKASI PER AKUN DI HOME PAGE
   const togglePinRoom = async (room) => {
     const isPinned = room.pinnedBy?.includes(user.uid);
     try {
@@ -352,12 +408,35 @@ export default function App() {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const joinRoomId = params.get('join');
+    if (joinRoomId) {
+      localStorage.setItem('mdchat_pending_join', joinRoomId);
+    }
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
         await setDoc(doc(db, 'users', currentUser.uid), {
           uid: currentUser.uid, email: currentUser.email, name: currentUser.displayName, photo: currentUser.photoURL, lastSeen: serverTimestamp()
         }, { merge: true });
+
+        const pendingJoinId = localStorage.getItem('mdchat_pending_join');
+        if (pendingJoinId) {
+          try {
+            await updateDoc(doc(db, 'chatRooms', pendingJoinId), {
+              participants: arrayUnion(currentUser.uid),
+              removedParticipants: arrayRemove(currentUser.uid)
+            });
+            localStorage.removeItem('mdchat_pending_join');
+            window.history.replaceState({}, document.title, window.location.pathname);
+            showToast("Anda berhasil bergabung ke grup melalui tautan undangan!");
+          } catch (e) {
+            localStorage.removeItem('mdchat_pending_join');
+          }
+        }
       }
     });
     return () => unsubscribe();
@@ -367,12 +446,18 @@ export default function App() {
     if (!user) return;
     const qUsers = query(collection(db, 'users'));
     const unsub = onSnapshot(qUsers, (snapshot) => {
-      setContacts(snapshot.docs.map(d => d.data()).filter(u => u.uid !== user.uid));
+      const allDocs = snapshot.docs.map(d => d.data());
+      const myDoc = allDocs.find(u => u.uid === user.uid);
+      if (myDoc?.isBlocked && user.email !== ADMIN_EMAIL) {
+        alert("Akses akun Anda telah dinonaktifkan oleh Administrator.");
+        signOut(auth);
+        return;
+      }
+      setContacts(allDocs.filter(u => u.uid !== user.uid && !u.isBlocked));
     });
     return () => unsub();
   }, [user]);
 
-  // LISTEN DAFTAR CHAT, PIN SORTING, MUTE FILTER, & NOTIFIKASI LUAR APLIKASI
   useEffect(() => {
     if (!user) return;
     const qRooms = query(collection(db, 'chatRooms'), orderBy('lastMessageTime', 'desc'));
@@ -382,6 +467,9 @@ export default function App() {
       let totalUnreadGlobal = 0;
       
       rooms.forEach(room => {
+        const isKicked = room.removedParticipants?.includes(user.uid);
+        if (isKicked && !isAdmin) return;
+
         const isParticipant = room.type === 'group' || (room.type === 'private' && room.participants?.includes(user.uid));
         const hasMessages = !!room.lastMessage;
         const isCreator = room.createdBy === user.uid;
@@ -406,12 +494,19 @@ export default function App() {
            room.badgeCount = isRoomActivelyViewed ? 0 : (room.unreadCount?.[user.uid] || 0);
            totalUnreadGlobal += room.badgeCount;
 
+           const senderPrefix = (room.type === 'group' && room.lastSenderName)
+             ? `${room.lastSenderId === user.uid ? 'Anda' : room.lastSenderName.split(' ')[0]}: `
+             : '';
+           room.formattedPreview = room.lastMessage ? `${senderPrefix}${room.lastMessage}` : 'Belum ada pesan';
+
            const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
            if (!isInitialLoadRef.current && msgTimeStr && lastNotifiedRef.current[room.id] !== msgTimeStr) {
-              // Hanya bunyikan notifikasi jika pengirimnya orang lain DAN room tersebut TIDAK di-mute
               if (room.lastSenderId && room.lastSenderId !== user.uid && room.lastMessage && !room.isMutedRoom) {
                  if (document.visibilityState !== 'visible' || !document.hasFocus() || !isRoomActivelyViewed) {
-                    triggerExternalNotification(room.displayName, room.lastMessage, room.displayAvatar);
+                    const notifBody = room.type === 'group' && room.lastSenderName
+                      ? `${room.lastSenderName}: ${room.lastMessage}`
+                      : room.lastMessage;
+                    triggerExternalNotification(room.displayName, notifBody, room.displayAvatar);
                  }
               }
            }
@@ -423,7 +518,6 @@ export default function App() {
         }
       });
       
-      // Urutkan agar percakapan yang di-Pin selalu berada di paling atas
       processedRooms.sort((a, b) => {
         if (a.isPinnedRoom && !b.isPinnedRoom) return -1;
         if (!a.isPinnedRoom && b.isPinnedRoom) return 1;
@@ -435,16 +529,20 @@ export default function App() {
       isInitialLoadRef.current = false;
       setChatRooms(processedRooms);
 
+      if (activeGroup) {
+        const updatedActive = processedRooms.find(r => r.id === activeGroup.id);
+        if (updatedActive) setActiveGroup(updatedActive);
+      }
+
       if ('setAppBadge' in navigator) {
          if (totalUnreadGlobal > 0) navigator.setAppBadge(totalUnreadGlobal).catch(() => {});
          else navigator.clearAppBadge().catch(() => {});
       }
-      document.title = totalUnreadGlobal > 0 ? `(${totalUnreadGlobal}) Nexus Chat` : 'Nexus Chat';
+      document.title = totalUnreadGlobal > 0 ? `(${totalUnreadGlobal}) MD Chat` : 'MD Chat';
     });
     return () => unsub();
-  }, [user, contacts, activeGroup, isMobileChatOpen]);
+  }, [user, contacts, activeGroup?.id, isMobileChatOpen]);
 
-  // AUTO-READ KETIKA ROOM DIBUKA
   useEffect(() => {
     if (!user || !activeGroup) return;
     setCurrentPinIndex(0);
@@ -515,7 +613,8 @@ export default function App() {
     if (!roomId) return;
     if (!remainingMessages || remainingMessages.length === 0) {
       await updateDoc(doc(db, 'chatRooms', roomId), {
-        lastMessage: ''
+        lastMessage: '',
+        lastSenderName: ''
       }).catch(() => {});
     } else {
       const lastMsg = remainingMessages[remainingMessages.length - 1];
@@ -524,7 +623,8 @@ export default function App() {
         : (lastMsg.fileName ? `📎 ${lastMsg.fileName}` : 'Pesan');
       await updateDoc(doc(db, 'chatRooms', roomId), {
         lastMessage: previewText,
-        lastSenderId: lastMsg.uid
+        lastSenderId: lastMsg.uid,
+        lastSenderName: lastMsg.senderName || ''
       }).catch(() => {});
     }
   };
@@ -575,6 +675,79 @@ export default function App() {
     setSelectedMessages([]);
   };
 
+  const handleAddMemberToGroup = async (targetUser) => {
+    if (!activeGroup) return;
+    try {
+      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+        participants: arrayUnion(targetUser.uid),
+        removedParticipants: arrayRemove(targetUser.uid)
+      });
+      showToast(`${targetUser.name} ditambahkan ke grup`);
+    } catch (e) {
+      alert("Gagal menambahkan anggota.");
+    }
+  };
+
+  const handleRemoveMemberFromGroup = async (targetUser) => {
+    if (!activeGroup) return;
+    if (!window.confirm(`Keluarkan ${targetUser.name} dari grup ${activeGroup.displayName}?`)) return;
+    try {
+      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+        participants: arrayRemove(targetUser.uid),
+        removedParticipants: arrayUnion(targetUser.uid)
+      });
+      showToast(`${targetUser.name} dikeluarkan dari grup`);
+    } catch (e) {
+      alert("Gagal mengeluarkan anggota.");
+    }
+  };
+
+  const handleSendEmailInvite = (e) => {
+    e?.preventDefault();
+    if (!inviteEmail.trim() || !activeGroup) return;
+    const targetEmail = inviteEmail.trim().toLowerCase();
+    const joinLink = `${window.location.origin}/?join=${activeGroup.id}`;
+
+    const existingContact = contacts.find(c => c.email?.toLowerCase() === targetEmail);
+    if (existingContact) {
+      handleAddMemberToGroup(existingContact);
+    }
+
+    const subject = encodeURIComponent(`Undangan Bergabung ke Grup "${activeGroup.displayName}" - MD Chat`);
+    const body = encodeURIComponent(
+      `Halo,\n\n${user.displayName} mengundang Anda untuk bergabung ke ruang percakapan grup "${activeGroup.displayName}" di aplikasi MD Chat.\n\nKlik tautan di bawah ini untuk langsung bergabung:\n${joinLink}\n\nSalam,\nTim MD Chat`
+    );
+    window.open(`mailto:${targetEmail}?subject=${subject}&body=${body}`, '_blank');
+    setInviteEmail('');
+    showToast("Membuka pengirim email undangan...");
+  };
+
+  const handleCopyGroupInviteLink = () => {
+    if (!activeGroup) return;
+    const joinLink = `${window.location.origin}/?join=${activeGroup.id}`;
+    navigator.clipboard.writeText(joinLink);
+    showToast("Tautan undangan grup disalin!");
+  };
+
+  const handleAdminDeleteUserAccount = async (targetUser) => {
+    if (!isAdmin) return;
+    if (!window.confirm(`PERINGATAN ADMIN:\nKeluarkan dan blokir akun "${targetUser.name}" (${targetUser.email}) dari seluruh sistem MD Chat?`)) return;
+    try {
+      await updateDoc(doc(db, 'users', targetUser.uid), { isBlocked: true });
+      for (const room of chatRooms) {
+        if (room.participants?.includes(targetUser.uid)) {
+          await updateDoc(doc(db, 'chatRooms', room.id), {
+            participants: arrayRemove(targetUser.uid),
+            removedParticipants: arrayUnion(targetUser.uid)
+          }).catch(() => {});
+        }
+      }
+      showToast(`Akun ${targetUser.name} berhasil dihapus & diblokir.`);
+    } catch (e) {
+      alert("Gagal menghapus akun.");
+    }
+  };
+
   const handleLogin = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { console.error("Error login:", error); }
   };
@@ -585,7 +758,7 @@ export default function App() {
     const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(newGroupName)}&backgroundColor=0f172a`;
     const newRoom = await addDoc(collection(db, 'chatRooms'), {
       name: newGroupName, type: 'group', avatar: avatarUrl,
-      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: allMemberUids, unreadCount: {}, pinnedBy: [], mutedBy: []
+      createdAt: serverTimestamp(), lastMessageTime: serverTimestamp(), createdBy: user.uid, participants: allMemberUids, removedParticipants: [], unreadCount: {}, pinnedBy: [], mutedBy: []
     });
     setActiveGroup({ id: newRoom.id, name: newGroupName, displayName: newGroupName, avatar: avatarUrl, displayAvatar: avatarUrl, type: 'group', participants: allMemberUids });
     setModalConfig({ type: null }); setNewGroupName(''); setIsMobileChatOpen(true);
@@ -622,7 +795,8 @@ export default function App() {
         await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id));
       }
       await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
-        lastMessage: ''
+        lastMessage: '',
+        lastSenderName: ''
       }).catch(() => {});
       setShowRoomOptions(null);
       showToast("Isi percakapan dibersihkan");
@@ -639,29 +813,40 @@ export default function App() {
     if (!newMessage.trim() || !activeGroup) return;
     
     let msgText = newMessage;
+    setNewMessage('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
     if (editingMessage) {
-      await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), { text: msgText, isEdited: true });
+      const editId = editingMessage.id;
+      setEditingMessage(null);
+      await updateDoc(doc(db, `messages_${activeGroup.id}`, editId), { text: msgText, isEdited: true });
       const visible = messages.filter(m => !m.deletedFor?.includes(user.uid));
-      if (visible.length > 0 && visible[visible.length - 1].id === editingMessage.id) {
+      if (visible.length > 0 && visible[visible.length - 1].id === editId) {
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
           lastMessage: msgText.substring(0, 35) + (msgText.length > 35 ? '...' : '')
         }).catch(() => {});
       }
-      setEditingMessage(null);
     } else {
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
         text: msgText, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isEdited: false, isPinned: false, deletedFor: []
       });
       
-      const updateData = { lastMessage: msgText.substring(0, 35) + (msgText.length > 35 ? '...' : ''), lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-      const targetUids = activeGroup.type === 'group' ? contacts.map(c => c.uid) : (activeGroup.participants || []);
+      const updateData = {
+        lastMessage: msgText.substring(0, 35) + (msgText.length > 35 ? '...' : ''),
+        lastSenderId: user.uid,
+        lastSenderName: user.displayName,
+        lastMessageTime: serverTimestamp()
+      };
+      const targetUids = activeGroup.type === 'group'
+        ? (activeGroup.participants?.length ? activeGroup.participants : contacts.map(c => c.uid))
+        : (activeGroup.participants || []);
       targetUids.forEach(pUid => {
-         if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1);
+         if (pUid !== user.uid && !activeGroup.removedParticipants?.includes(pUid)) {
+           updateData[`unreadCount.${pUid}`] = increment(1);
+         }
       });
       await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
     }
-    setNewMessage('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
   const handleFileSelection = (e) => {
@@ -673,29 +858,51 @@ export default function App() {
   };
 
   const confirmUpload = async () => {
-    if (!pendingUploadFile || !activeGroup) return;
+    if (!pendingUploadFile || !activeGroup || uploadingLockRef.current || isUploading) return;
+    uploadingLockRef.current = true;
     setIsUploading(true);
-    const isImage = pendingUploadFile.type.startsWith('image/');
+
+    const fileToSend = pendingUploadFile;
+    const captionToSend = uploadCaption;
+    const isImage = fileToSend.type.startsWith('image/');
     const formData = new FormData();
-    formData.append('file', pendingUploadFile); formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    formData.append('file', fileToSend);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+
     try {
       const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${isImage ? 'image' : 'raw'}/upload`, { method: 'POST', body: formData });
       const data = await response.json();
       if (data.secure_url) {
         await addDoc(collection(db, `messages_${activeGroup.id}`), {
-          text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false, deletedFor: []
+          text: captionToSend || '', fileData: data.secure_url, fileName: fileToSend.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false, deletedFor: []
         });
         
-        const previewLabel = uploadCaption ? uploadCaption.substring(0, 35) : `📎 ${pendingUploadFile.name}`;
-        const updateData = { lastMessage: previewLabel, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
-        const targetUids = activeGroup.type === 'group' ? contacts.map(c => c.uid) : (activeGroup.participants || []);
-        targetUids.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
+        const previewLabel = captionToSend ? captionToSend.substring(0, 35) : `📎 ${fileToSend.name}`;
+        const updateData = {
+          lastMessage: previewLabel,
+          lastSenderId: user.uid,
+          lastSenderName: user.displayName,
+          lastMessageTime: serverTimestamp()
+        };
+        const targetUids = activeGroup.type === 'group'
+          ? (activeGroup.participants?.length ? activeGroup.participants : contacts.map(c => c.uid))
+          : (activeGroup.participants || []);
+        targetUids.forEach(pUid => {
+          if (pUid !== user.uid && !activeGroup.removedParticipants?.includes(pUid)) {
+            updateData[`unreadCount.${pUid}`] = increment(1);
+          }
+        });
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
         
         setPendingUploadFile(null); setPendingPreviewUrl(null); setUploadCaption('');
+        showToast("File berhasil dikirim!");
       } else { throw new Error(data.error?.message); }
-    } catch (error) { alert(`GAGAL UPLOAD!\nPastikan nama Cloudinary dan Preset sudah benar.`); }
-    setIsUploading(false);
+    } catch (error) {
+      alert(`GAGAL UPLOAD!\nPastikan koneksi stabil serta nama Cloudinary dan Preset sudah benar.`);
+    } finally {
+      uploadingLockRef.current = false;
+      setIsUploading(false);
+    }
   };
 
   const handleForwardToWA = async (msgArray) => {
@@ -750,7 +957,7 @@ export default function App() {
          }
       } else {
          const grp = chatRooms.find(r => r.id === roomId);
-         targetParticipants = grp?.type === 'group' ? contacts.map(c => c.uid) : (grp?.participants || []);
+         targetParticipants = grp?.type === 'group' ? (grp?.participants?.length ? grp.participants : contacts.map(c => c.uid)) : (grp?.participants || []);
       }
 
       for (let msg of msgsToForward) {
@@ -762,7 +969,12 @@ export default function App() {
       
       const lastForwarded = msgsToForward[msgsToForward.length - 1];
       const previewLabel = lastForwarded.text ? lastForwarded.text.substring(0, 35) : `📎 ${lastForwarded.fileName || 'Lampiran'}`;
-      const updateData = { lastMessage: previewLabel, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+      const updateData = {
+        lastMessage: previewLabel,
+        lastSenderId: user.uid,
+        lastSenderName: user.displayName,
+        lastMessageTime: serverTimestamp()
+      };
       targetParticipants.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
       await updateDoc(doc(db, 'chatRooms', roomId), updateData);
     }
@@ -847,14 +1059,20 @@ export default function App() {
     } catch (error) { alert("Gagal mengubah foto profil."); }
   };
 
+  // HALAMAN LOGIN DENGAN LOGO & BRANDING "MD CHAT"
   if (!user) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#0f172a]">
-        <div className="bg-[#1e293b] p-10 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4 border border-[#334155]">
-          <div className="w-16 h-16 bg-gradient-to-tr from-[#10b981] to-[#3b82f6] rounded-xl mx-auto mb-6 shadow-lg flex items-center justify-center"><MessageSquare size={32} className="text-white" /></div>
-          <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#10b981] to-[#3b82f6] mb-2">Nexus Chat</h1>
-          <p className="mb-8 text-[#94a3b8] text-sm">Enterprise Secure Messaging</p>
-          <button onClick={handleLogin} className="w-full bg-gradient-to-r from-[#10b981] to-[#059669] text-white py-3.5 rounded-xl transition-all font-semibold">Masuk dengan Google</button>
+      <div className="flex h-screen items-center justify-center bg-[#070b14]">
+        <div className="bg-[#111827] p-10 rounded-3xl shadow-[0_0_50px_rgba(56,189,248,0.15)] text-center max-w-sm w-full mx-4 border border-[#1e293b]">
+          <img src={APP_LOGO} alt="MD Chat Logo" className="w-28 h-28 mx-auto mb-5 rounded-3xl shadow-[0_0_30px_rgba(196,113,237,0.3)] object-contain" />
+          <h1 className="text-3xl font-black tracking-wider mb-2">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00f2fe] via-[#4facfe] to-[#c471ed]">MD</span>{' '}
+            <span className="text-white">CHAT</span>
+          </h1>
+          <p className="mb-8 text-[#94a3b8] text-xs tracking-wide">Enterprise Real-Time Communication</p>
+          <button onClick={handleLogin} className="w-full bg-gradient-to-r from-[#00f2fe] via-[#3b82f6] to-[#c471ed] text-white py-3.5 rounded-xl transition-all font-bold shadow-lg hover:opacity-95">
+            Masuk dengan Google
+          </button>
         </div>
       </div>
     );
@@ -883,7 +1101,14 @@ export default function App() {
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
-  const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.length > 0 && deleteModalTargets.every(m => m.uid === user.uid);
+  const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.length > 0 && deleteModalTargets.every(m => m.uid === user.uid || isAdmin);
+
+  const activeGroupMemberUids = activeGroup?.type === 'group'
+    ? (activeGroup.participants?.length ? activeGroup.participants : [user.uid, ...contacts.map(c => c.uid)]).filter(uid => !activeGroup.removedParticipants?.includes(uid))
+    : [];
+  const allKnownUsers = [{ uid: user.uid, name: `${user.displayName} (Anda)`, email: user.email, photo: user.photoURL }, ...contacts];
+  const groupMemberObjects = allKnownUsers.filter(u => activeGroupMemberUids.includes(u.uid));
+  const nonMemberContacts = contacts.filter(c => !activeGroupMemberUids.includes(c.uid));
 
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9] select-none md:select-auto" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
@@ -896,69 +1121,73 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL PENGATURAN NOTIFIKASI LENGKAP (ON/OFF, HP/DESKTOP, VOLUME, GETAR) */}
+      {/* MODAL PENGATURAN NOTIFIKASI DESAIN ENTERPRISE ELEGAN */}
       {modalConfig.type === 'notifSettings' && (
-        <div className="fixed inset-0 z-[750] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setModalConfig({ type: null })}>
-          <div className="bg-[#1e293b] w-full max-w-md rounded-2xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="p-4 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
-              <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2">
-                <Bell className="text-[#10b981]" size={18}/> Pengaturan Notifikasi
-              </h2>
-              <button onClick={() => setModalConfig({ type: null })} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
+        <div className="fixed inset-0 z-[750] bg-[#020617]/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setModalConfig({ type: null })}>
+          <div className="bg-gradient-to-b from-[#1e293b] to-[#0f172a] w-full max-w-md rounded-3xl border border-[#334155]/80 shadow-[0_25px_70px_rgba(0,0,0,0.75)] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-[#334155]/60 flex justify-between items-center bg-[#0f172a]/60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#10b981]/20 to-[#3b82f6]/20 border border-[#10b981]/30 flex items-center justify-center shadow-inner">
+                  <Bell className="text-[#10b981]" size={20}/>
+                </div>
+                <div>
+                  <h2 className="font-bold text-[#f8fafc] text-base tracking-tight">Preferensi Notifikasi</h2>
+                  <p className="text-[11px] text-[#64748b]">Pengaturan suara, getar & layar MD Chat</p>
+                </div>
+              </div>
+              <button onClick={() => setModalConfig({ type: null })} className="text-[#64748b] hover:text-white p-2 rounded-xl hover:bg-[#1e293b] transition"><X size={18}/></button>
             </div>
 
-            <div className="p-5 flex flex-col gap-4 overflow-y-auto max-h-[80vh] hide-scroll">
-              {/* Status Izin Browser */}
-              <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#334155] flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold text-[#f1f5f9]">Izin Browser / Sistem HP</p>
-                  <p className="text-[11px] text-[#94a3b8] mt-0.5">
-                    Status: <span className={notifPermission === 'granted' ? 'text-[#10b981] font-bold' : 'text-[#eab308] font-bold'}>
-                      {notifPermission === 'granted' ? 'Diizinkan (Aktif)' : 'Belum Diizinkan'}
-                    </span>
-                  </p>
+            <div className="p-6 flex flex-col gap-5 overflow-y-auto max-h-[80vh] hide-scroll">
+              <div className="bg-[#0f172a]/90 p-4 rounded-2xl border border-[#334155]/70 flex items-center justify-between shadow-inner">
+                <div className="flex items-center gap-3">
+                  <span className={`w-2.5 h-2.5 rounded-full ${notifPermission === 'granted' ? 'bg-[#10b981] shadow-[0_0_10px_#10b981]' : 'bg-[#eab308] animate-ping'}`}></span>
+                  <div>
+                    <p className="text-xs font-bold text-[#f1f5f9]">Izin Sistem Operasi & Browser</p>
+                    <p className="text-[11px] text-[#94a3b8] mt-0.5">
+                      {notifPermission === 'granted' ? 'Notifikasi Latar Belakang Aktif' : 'Izin Pop-up Belum Diaktifkan'}
+                    </p>
+                  </div>
                 </div>
                 {notifPermission !== 'granted' ? (
-                  <button onClick={requestNotificationPermission} className="bg-[#10b981] hover:bg-[#059669] text-white text-xs font-bold px-3 py-2 rounded-lg transition">
-                    Izinkan
+                  <button onClick={requestNotificationPermission} className="bg-gradient-to-r from-[#10b981] to-[#059669] text-white text-xs font-bold px-4 py-2 rounded-xl shadow-lg hover:opacity-95 transition">
+                    Aktifkan
                   </button>
                 ) : (
-                  <button onClick={() => triggerExternalNotification("Tes Notifikasi Nexus", "Suara, getar, dan pop-up berjalan lancar!", user?.photoURL, true)} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs font-bold px-3 py-2 rounded-lg transition">
-                    Tes Notif
+                  <button onClick={() => triggerExternalNotification("MD Chat", "Tes Pop-up Banner & Nada Dering Berhasil!", APP_LOGO, true)} className="bg-[#1e293b] hover:bg-[#334155] border border-[#3b82f6]/40 text-[#3b82f6] text-xs font-bold px-3.5 py-2 rounded-xl transition">
+                    Uji Notif
                   </button>
                 )}
               </div>
 
-              {/* Sakelar Utama On/Off Notifikasi */}
               <div className="flex items-center justify-between px-1">
                 <div>
-                  <p className="text-sm font-semibold text-[#f1f5f9]">Aktifkan Notifikasi Pesan</p>
-                  <p className="text-xs text-[#64748b]">Matikan jika tidak ingin diganggu</p>
+                  <p className="text-sm font-bold text-[#f8fafc]">Notifikasi Pesan Masuk</p>
+                  <p className="text-[11px] text-[#64748b]">Tampilkan pemberitahuan saat aplikasi di latar belakang</p>
                 </div>
                 <button
                   onClick={() => setNotifSettings(prev => ({ ...prev, enabled: !prev.enabled }))}
-                  className={`w-12 h-6 rounded-full transition-colors p-1 flex items-center ${notifSettings.enabled ? 'bg-[#10b981] justify-end' : 'bg-[#334155] justify-start'}`}
+                  className={`w-12 h-6 rounded-full transition-all duration-300 p-0.5 flex items-center ${notifSettings.enabled ? 'bg-gradient-to-r from-[#10b981] to-[#059669] justify-end shadow-[0_0_12px_rgba(16,185,129,0.4)]' : 'bg-[#334155] justify-start'}`}
                 >
-                  <div className="w-4 h-4 rounded-full bg-white shadow-md"></div>
+                  <div className="w-5 h-5 rounded-full bg-white shadow-md"></div>
                 </button>
               </div>
 
-              {/* Pilihan Target Perangkat: HP / Desktop / Keduanya */}
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-[#94a3b8] uppercase tracking-wider">Aktifkan Pada Perangkat:</label>
-                <div className="grid grid-cols-3 gap-2">
+                <label className="text-[10px] font-bold text-[#64748b] uppercase tracking-widest px-1">Target Perangkat Aktif</label>
+                <div className="bg-[#0f172a] p-1 rounded-2xl border border-[#334155]/70 grid grid-cols-3 gap-1">
                   {[
-                    { id: 'both', label: 'HP & Desktop' },
+                    { id: 'both', label: 'Semua' },
                     { id: 'mobile', label: 'Hanya HP' },
-                    { id: 'desktop', label: 'Hanya Desktop' }
+                    { id: 'desktop', label: 'Desktop' }
                   ].map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setNotifSettings(prev => ({ ...prev, targetDevice: opt.id }))}
-                      className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition ${
+                      className={`py-2 px-2 rounded-xl text-xs font-bold transition-all ${
                         notifSettings.targetDevice === opt.id
-                          ? 'bg-[#3b82f6]/20 border-[#3b82f6] text-[#3b82f6]'
-                          : 'bg-[#0f172a] border-[#334155] text-[#94a3b8] hover:bg-[#334155]'
+                          ? 'bg-gradient-to-r from-[#3b82f6] to-[#2563eb] text-white shadow-md'
+                          : 'text-[#94a3b8] hover:text-white'
                       }`}
                     >
                       {opt.label}
@@ -967,70 +1196,106 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Pengaturan Suara & Volume Nada Dering */}
-              <div className="bg-[#0f172a] p-4 rounded-xl border border-[#334155] flex flex-col gap-3">
+              <div className="bg-[#0f172a]/80 p-4 rounded-2xl border border-[#334155]/70 flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {notifSettings.soundEnabled ? <Volume2 size={18} className="text-[#3b82f6]"/> : <VolumeX size={18} className="text-[#64748b]"/>}
-                    <span className="text-xs font-bold text-[#f1f5f9]">Nada Dering Notifikasi</span>
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl ${notifSettings.soundEnabled ? 'bg-[#3b82f6]/15 text-[#3b82f6]' : 'bg-[#1e293b] text-[#64748b]'}`}>
+                      {notifSettings.soundEnabled ? <Volume2 size={16}/> : <VolumeX size={16}/>}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-[#f1f5f9]">Nada Dering Pesan</p>
+                      <p className="text-[10px] text-[#64748b]">Suara notifikasi saat pesan tiba</p>
+                    </div>
                   </div>
                   <button
                     onClick={() => setNotifSettings(prev => ({ ...prev, soundEnabled: !prev.soundEnabled }))}
-                    className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${notifSettings.soundEnabled ? 'bg-[#3b82f6] justify-end' : 'bg-[#334155] justify-start'}`}
+                    className={`w-11 h-6 rounded-full transition-all p-0.5 flex items-center ${notifSettings.soundEnabled ? 'bg-[#3b82f6] justify-end' : 'bg-[#334155] justify-start'}`}
                   >
-                    <div className="w-4 h-4 rounded-full bg-white"></div>
+                    <div className="w-5 h-5 rounded-full bg-white shadow"></div>
                   </button>
                 </div>
 
                 {notifSettings.soundEnabled && (
-                  <div className="flex flex-col gap-1.5 mt-1">
-                    <div className="flex justify-between text-[11px] text-[#94a3b8]">
-                      <span>Volume Nada Dering</span>
-                      <span className="font-bold text-[#3b82f6]">{notifSettings.volume}%</span>
+                  <div className="flex flex-col gap-2 pt-1 border-t border-[#1e293b]">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-[#94a3b8] font-medium">Tingkat Volume</span>
+                      <span className="font-bold text-[#3b82f6] bg-[#3b82f6]/10 px-2 py-0.5 rounded-md">{notifSettings.volume}%</span>
                     </div>
                     <input
                       type="range"
                       min="0"
                       max="100"
                       value={notifSettings.volume}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setNotifSettings(prev => ({ ...prev, volume: val }));
-                      }}
+                      onChange={(e) => setNotifSettings(prev => ({ ...prev, volume: Number(e.target.value) }))}
                       onMouseUp={() => playNotificationSound(notifSettings.volume)}
                       onTouchEnd={() => playNotificationSound(notifSettings.volume)}
-                      className="w-full accent-[#3b82f6] cursor-pointer"
+                      className="w-full h-1.5 bg-[#1e293b] rounded-lg accent-[#3b82f6] cursor-pointer"
                     />
                   </div>
                 )}
-              </div>
 
-              {/* Pengaturan Getar (Vibrate) Khusus HP */}
-              <div className="bg-[#0f172a] p-3.5 rounded-xl border border-[#334155] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Smartphone size={18} className={notifSettings.vibrateEnabled ? 'text-[#10b981]' : 'text-[#64748b]'} />
-                  <div>
-                    <p className="text-xs font-bold text-[#f1f5f9]">Getar Saat Pesan Masuk (HP)</p>
-                    <p className="text-[10px] text-[#64748b]">Bergetar ketika notifikasi muncul di Android</p>
+                <div className="flex items-center justify-between pt-2 border-t border-[#1e293b]">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl ${notifSettings.vibrateEnabled ? 'bg-[#10b981]/15 text-[#10b981]' : 'bg-[#1e293b] text-[#64748b]'}`}>
+                      <Smartphone size={16}/>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-[#f1f5f9]">Getaran Haptic (HP)</p>
+                      <p className="text-[10px] text-[#64748b]">Pola getar aktif saat notifikasi masuk</p>
+                    </div>
                   </div>
+                  <button
+                    onClick={() => {
+                      const nextVal = !notifSettings.vibrateEnabled;
+                      setNotifSettings(prev => ({ ...prev, vibrateEnabled: nextVal }));
+                      if (nextVal && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                    }}
+                    className={`w-11 h-6 rounded-full transition-all p-0.5 flex items-center ${notifSettings.vibrateEnabled ? 'bg-[#10b981] justify-end' : 'bg-[#334155] justify-start'}`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-white shadow"></div>
+                  </button>
                 </div>
-                <button
-                  onClick={() => {
-                    const nextVal = !notifSettings.vibrateEnabled;
-                    setNotifSettings(prev => ({ ...prev, vibrateEnabled: nextVal }));
-                    if (nextVal && navigator.vibrate) navigator.vibrate(150);
-                  }}
-                  className={`w-10 h-5 rounded-full transition-colors p-0.5 flex items-center ${notifSettings.vibrateEnabled ? 'bg-[#10b981] justify-end' : 'bg-[#334155] justify-start'}`}
-                >
-                  <div className="w-4 h-4 rounded-full bg-white"></div>
-                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL KONFIRMASI HAPUS PESAN (UNTUK SAYA / UNTUK SEMUA) */}
+      {/* MODAL ADMIN: KELOLA & BLOKIR AKUN PENGGUNA */}
+      {modalConfig.type === 'manageUsers' && isAdmin && (
+        <div className="fixed inset-0 z-[750] bg-[#020617]/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setModalConfig({ type: null })}>
+          <div className="bg-[#1e293b] w-full max-w-md rounded-3xl border border-[#334155] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-[#334155] flex justify-between items-center bg-[#0f172a]">
+              <h2 className="font-bold text-[#f1f5f9] text-base flex items-center gap-2">
+                <ShieldAlert className="text-[#ef4444]" size={18}/> Kelola Akun MD Chat ({contacts.length})
+              </h2>
+              <button onClick={() => setModalConfig({ type: null })} className="text-[#94a3b8] hover:text-white"><X size={20}/></button>
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto hide-scroll flex flex-col gap-2">
+              {contacts.length === 0 && <p className="text-xs text-[#64748b] text-center py-6">Tidak ada akun lain yang terdaftar.</p>}
+              {contacts.map(c => (
+                <div key={c.uid} className="flex items-center justify-between p-3 bg-[#0f172a] rounded-2xl border border-[#334155]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img src={c.photo} alt={c.name} className="w-10 h-10 rounded-full shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#f1f5f9] truncate">{c.name}</p>
+                      <p className="text-[11px] text-[#64748b] truncate">{c.email}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleAdminDeleteUserAccount(c)}
+                    className="bg-[#ef4444]/15 hover:bg-[#ef4444] text-[#ef4444] hover:text-white px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ml-2"
+                  >
+                    Keluarkan
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI HAPUS PESAN */}
       {deleteModalTargets && (
         <div className="fixed inset-0 z-[700] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDeleteModalTargets(null)}>
           <div className="bg-[#1e293b] w-full max-w-xs rounded-2xl border border-[#334155] shadow-2xl p-5 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
@@ -1073,7 +1338,7 @@ export default function App() {
              </div>
 
              <div className="p-3 bg-[#1e293b] flex-1 flex flex-col min-h-0">
-                <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Internal:</p>
+                <p className="text-xs text-[#64748b] font-semibold uppercase px-2 mb-2">Atau teruskan ke Kontak MD Chat:</p>
                 <div className="flex items-center bg-[#0f172a] rounded-xl px-3 py-1.5 border border-[#334155] mb-2">
                   <Search size={14} className="text-[#64748b]" />
                   <input type="text" value={contactSearch} onChange={e => setContactSearch(e.target.value)} placeholder="Cari nama kontak / grup..." className="bg-transparent border-none outline-none text-xs text-white w-full ml-2" />
@@ -1148,7 +1413,10 @@ export default function App() {
                     {filteredContacts.map(c => (
                       <div key={c.uid} onClick={() => submitNewJapri(c)} className="flex items-center gap-3 p-3 bg-[#0f172a] hover:bg-[#334155] border border-[#334155] rounded-xl cursor-pointer transition">
                         <img src={c.photo} alt={c.name} className="w-10 h-10 rounded-full" />
-                        <div className="flex-1 min-w-0"><p className="font-medium text-[#f1f5f9] truncate text-sm">{c.name}</p></div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-[#f1f5f9] truncate text-sm">{c.name}</p>
+                          <p className="text-[11px] text-[#64748b] truncate">{c.email}</p>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1159,31 +1427,86 @@ export default function App() {
         </div>
       )}
 
-      {/* LAYAR PRA-KIRIM FILE */}
+      {/* LAYAR PRA-KIRIM FILE DENGAN INDIKATOR LOADING & ANTI-SPAM KLIK */}
       {pendingUploadFile && (
         <div className="fixed inset-0 z-[300] bg-[#020617]/95 flex flex-col backdrop-blur-sm">
            <div className="h-16 flex items-center px-4 shrink-0 border-b border-[#334155]">
-            <button onClick={() => {setPendingUploadFile(null); setPendingPreviewUrl(null);}} className="text-[#94a3b8] p-2 hover:bg-[#1e293b] rounded-full transition"><X size={26} /></button>
+            <button
+              disabled={isUploading}
+              onClick={() => { if (!isUploading) { setPendingUploadFile(null); setPendingPreviewUrl(null); } }}
+              className="text-[#94a3b8] p-2 hover:bg-[#1e293b] rounded-full transition disabled:opacity-40"
+            >
+              <X size={26} />
+            </button>
             <span className="text-[#f1f5f9] ml-4 font-semibold">Kirim ke {activeGroup?.displayName}</span>
           </div>
-          <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden">
-            {pendingPreviewUrl ? <img src={pendingPreviewUrl} alt="Preview" className="max-w-full max-h-full rounded-lg drop-shadow-2xl" /> : <FileText size={100} className="text-[#475569]" />}
+          <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-hidden relative">
+            {pendingPreviewUrl ? (
+              <img src={pendingPreviewUrl} alt="Preview" className={`max-w-full max-h-full rounded-lg drop-shadow-2xl transition ${isUploading ? 'opacity-40 scale-95' : ''}`} />
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <FileText size={90} className="text-[#3b82f6]" />
+                <p className="text-sm font-bold text-[#f1f5f9]">{pendingUploadFile.name}</p>
+              </div>
+            )}
+
+            {isUploading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020617]/60 backdrop-blur-xs">
+                <div className="bg-[#1e293b] border border-[#334155] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3">
+                  <Loader2 size={24} className="text-[#10b981] animate-spin" />
+                  <div>
+                    <p className="text-sm font-bold text-white">Mengunggah File...</p>
+                    <p className="text-[11px] text-[#94a3b8]">Mohon tunggu, jangan tutup layar ini</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="bg-[#0f172a] px-4 py-4 flex items-end gap-3 border-t border-[#334155]">
-            <textarea value={uploadCaption} onChange={(e) => setUploadCaption(e.target.value)} rows={1} placeholder="Tambahkan keterangan..." className="flex-1 py-3 px-5 bg-[#1e293b] rounded-xl border border-[#334155] outline-none text-[#f1f5f9] hide-scroll" />
-            <button onClick={confirmUpload} className="bg-[#10b981] p-3.5 rounded-xl hover:bg-[#059669] transition"><Send size={24} className="text-white" /></button>
+            <textarea
+              disabled={isUploading}
+              value={uploadCaption}
+              onChange={(e) => setUploadCaption(e.target.value)}
+              rows={1}
+              placeholder="Tambahkan keterangan..."
+              className="flex-1 py-3 px-5 bg-[#1e293b] rounded-xl border border-[#334155] outline-none text-[#f1f5f9] hide-scroll disabled:opacity-50"
+            />
+            <button
+              onClick={confirmUpload}
+              disabled={isUploading}
+              className={`px-5 py-3.5 rounded-xl font-bold text-sm transition flex items-center gap-2 shrink-0 ${
+                isUploading
+                  ? 'bg-[#334155] text-[#94a3b8] cursor-not-allowed'
+                  : 'bg-gradient-to-r from-[#10b981] to-[#059669] hover:opacity-95 text-white shadow-lg cursor-pointer'
+              }`}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 size={20} className="animate-spin text-[#10b981]" />
+                  <span>Mengirim...</span>
+                </>
+              ) : (
+                <>
+                  <Send size={20} className="text-white" />
+                  <span>Kirim</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}
 
-      {/* 3. SIDEBAR KIRI */}
+      {/* SIDEBAR KIRI */}
       <div className={`${isMobileChatOpen ? 'hidden md:flex' : 'flex'} w-full md:w-[30%] lg:w-[25%] border-r border-[#1e293b] bg-[#0f172a] flex-col h-full z-10 shrink-0 shadow-2xl relative`}>
         
         <div className="absolute bottom-5 right-5 z-50">
           {showFabMenu && (
-             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-40 mb-2 origin-bottom-right" onClick={e => e.stopPropagation()}>
-               <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'japri'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><User size={16} className="text-[#10b981]"/> New Chat</button>
-               <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'group'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-sm text-[#f1f5f9] font-medium"><Users size={16} className="text-[#3b82f6]"/> New Group</button>
+             <div className="absolute bottom-14 right-0 bg-[#1e293b] rounded-xl shadow-2xl border border-[#334155] p-2 flex flex-col gap-1 w-44 mb-2 origin-bottom-right" onClick={e => e.stopPropagation()}>
+               <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'japri'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-xs text-[#f1f5f9] font-semibold"><User size={15} className="text-[#10b981]"/> New Chat</button>
+               <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'group'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-xs text-[#f1f5f9] font-semibold"><Users size={15} className="text-[#3b82f6]"/> New Group</button>
+               {isAdmin && (
+                 <button onClick={(e) => {e.stopPropagation(); setModalConfig({type: 'manageUsers'}); setShowFabMenu(false);}} className="flex items-center gap-3 px-3 py-2 hover:bg-[#334155] rounded-lg text-xs text-[#ef4444] font-semibold border-t border-[#334155]"><ShieldAlert size={15}/> Kelola Akun</button>
+               )}
              </div>
           )}
           <button onClick={(e) => {e.stopPropagation(); setShowFabMenu(!showFabMenu);}} className="bg-[#10b981] p-3.5 rounded-full shadow-[0_4px_15px_rgba(16,185,129,0.4)] hover:bg-[#059669] transition-transform hover:scale-105 active:scale-95">
@@ -1192,14 +1515,24 @@ export default function App() {
         </div>
 
         <div className="bg-[#0f172a] h-16 flex items-center justify-between px-4 shrink-0 border-b border-[#1e293b]">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <img src={user.photoURL} alt="Profil" className="w-8 h-8 rounded-xl shadow-md border border-[#334155]" />
-            <div>
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <img src={APP_LOGO} alt="MD Chat" className="w-8 h-8 rounded-lg shadow-md border border-[#334155] shrink-0 object-cover" />
+            <img src={user.photoURL} alt="Profil" className="w-8 h-8 rounded-xl shadow-md border border-[#334155] shrink-0" />
+            <div className="min-w-0">
               <div className="font-bold text-[#f1f5f9] truncate text-[13px]">{user.displayName}</div>
+              {isAdmin ? (
+                <div className="text-[9px] text-[#00f2fe] font-bold uppercase tracking-wider">MD Chat Admin</div>
+              ) : (
+                <div className="text-[9px] text-[#94a3b8] font-medium truncate">MD Chat Online</div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {/* Tombol Buka Pengaturan Notifikasi */}
+            {isAdmin && (
+              <button onClick={(e) => { e.stopPropagation(); setModalConfig({ type: 'manageUsers' }); }} className="p-2 rounded-xl text-[#94a3b8] hover:text-white hover:bg-[#1e293b] transition" title="Kelola Akun Sistem">
+                <Users size={16} />
+              </button>
+            )}
             <button onClick={(e) => { e.stopPropagation(); setModalConfig({ type: 'notifSettings' }); }} className={`p-2 rounded-xl transition-colors ${notifSettings.enabled && notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title="Pengaturan Notifikasi">
               {notifSettings.enabled && notifPermission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
             </button>
@@ -1210,7 +1543,7 @@ export default function App() {
         <div className="p-3 bg-[#0f172a] shrink-0 border-b border-[#1e293b]">
            <div className="bg-[#1e293b] flex items-center rounded-xl px-3 py-2 border border-[#334155] focus-within:border-[#3b82f6] transition-colors">
               <Search size={16} className="text-[#64748b] shrink-0" />
-              <input type="text" value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} onKeyDown={handleGlobalSearch} placeholder="Cari / tekan Enter utk Global..." className="bg-transparent border-none outline-none ml-2 w-full text-xs text-[#f1f5f9] placeholder-[#64748b]" />
+              <input type="text" value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} onKeyDown={handleGlobalSearch} placeholder="Cari di MD Chat (Enter utk Global)..." className="bg-transparent border-none outline-none ml-2 w-full text-xs text-[#f1f5f9] placeholder-[#64748b]" />
            </div>
         </div>
 
@@ -1241,12 +1574,11 @@ export default function App() {
                           {room.isPinnedRoom && <Pin size={12} className="text-[#3b82f6] shrink-0 rotate-45" />}
                           {room.isMutedRoom && <BellOff size={12} className="text-[#64748b] shrink-0" />}
                         </div>
-                        <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Belum ada pesan'}</p>
+                        <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.formattedPreview}</p>
                       </div>
                       {unreadCount > 0 && <div className={`min-w-[20px] h-5 px-1.5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0 ${room.isMutedRoom ? 'bg-[#64748b]' : 'bg-[#3b82f6]'}`}>{unreadCount > 99 ? '99+' : unreadCount}</div>}
                     </div>
 
-                    {/* MENU TITIK 3 DI HOME PAGE (PIN PERCAKAPAN, MUTE AKUN, HAPUS OBROLAN) */}
                     <div className="relative shrink-0 ml-1">
                       <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === room.id ? null : room.id); }} className="p-1.5 rounded-lg text-[#64748b] hover:bg-[#334155] hover:text-[#f1f5f9] transition">
                         <MoreVertical size={14} />
@@ -1273,14 +1605,17 @@ export default function App() {
         </div>
       </div>
 
-      {/* AREA CHAT TENGAH */}
+      {/* AREA CHAT TENGAH DENGAN LOGO & BRANDING "MD CHAT" */}
       <div className={`${isMobileChatOpen && !showGroupInfo ? 'flex' : 'hidden md:flex'} flex-1 flex-col w-full h-full bg-[#020617] relative`}>
         
         {!activeGroup ? (
-          <div className="flex-1 flex flex-col items-center justify-center bg-[#0f172a]">
-             <div className="w-16 h-16 bg-[#1e293b] rounded-2xl mb-4 shadow-2xl flex items-center justify-center border border-[#334155]"><MessageSquare className="text-[#3b82f6]" size={28} /></div>
-             <h1 className="text-lg font-bold text-[#f1f5f9] mb-1">Nexus Enterprise</h1>
-             <p className="text-[#64748b] text-xs">Pilih percakapan untuk memulai.</p>
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#070b14]">
+             <img src={APP_LOGO} alt="MD Chat Logo" className="w-28 h-28 rounded-3xl mb-4 shadow-[0_0_40px_rgba(56,189,248,0.2)] border border-[#1e293b] object-contain" />
+             <h1 className="text-2xl font-black tracking-wider mb-1">
+               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00f2fe] via-[#4facfe] to-[#c471ed]">MD</span>{' '}
+               <span className="text-white">CHAT</span>
+             </h1>
+             <p className="text-[#64748b] text-xs">Pilih percakapan di sebelah kiri untuk memulai.</p>
           </div>
         ) : (
           <>
@@ -1293,6 +1628,7 @@ export default function App() {
                     {activeGroup.displayName}
                     {activeGroup.type === 'private' && <span className="px-1.5 py-0.5 bg-[#10b981]/20 text-[#10b981] text-[8px] rounded uppercase">Private</span>}
                   </h2>
+                  <p className="text-[10px] text-[#64748b] truncate">Ketuk untuk info anggota, undangan & file</p>
                 </div>
               </div>
               <div className="flex items-center gap-1 relative">
@@ -1300,15 +1636,15 @@ export default function App() {
                 <button onClick={(e) => { e.stopPropagation(); setShowRoomOptions(showRoomOptions === 'chat' ? null : 'chat'); }} className="p-2 rounded-xl transition-colors text-[#94a3b8] hover:bg-[#1e293b]" title="Opsi"><MoreVertical size={18}/></button>
                 
                 {showRoomOptions === 'chat' && (
-                   <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-48 z-[200]" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => { setShowGroupInfo(true); setShowRoomOptions(null); }} className="w-full text-left px-4 py-2.5 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Eye size={14}/> Info & File Obrolan</button>
+                   <div className="absolute top-10 right-0 bg-[#0f172a] border border-[#334155] shadow-2xl rounded-xl py-2 w-52 z-[200]" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setShowGroupInfo(true); setShowRoomOptions(null); }} className="w-full text-left px-4 py-2.5 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3"><Users size={14} className="text-[#3b82f6]"/> Anggota & File Grup</button>
+                      <button onClick={handleCopyGroupInviteLink} className="w-full text-left px-4 py-2.5 text-xs font-medium text-[#cbd5e1] hover:bg-[#1e293b] flex items-center gap-3 border-b border-[#334155]"><Link2 size={14} className="text-[#10b981]"/> Salin Link Undangan</button>
                       <button onClick={handleClearAllMessages} className="w-full text-left px-4 py-2.5 text-xs font-bold text-[#ef4444] hover:bg-[#1e293b] flex items-center gap-3"><Trash2 size={14}/> Bersihkan Isi Chat</button>
                    </div>
                 )}
               </div>
             </div>
 
-            {/* PINNED MESSAGES HEADER PROGRESIF */}
             {pinnedMessages.length > 0 && (
               <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 z-10 border-b border-[#334155] shadow-sm cursor-pointer hover:bg-[#334155] transition" onClick={handlePinClick}>
                  <Star size={16} className="text-[#eab308] shrink-0" />
@@ -1468,12 +1804,12 @@ export default function App() {
         )}
       </div>
 
-      {/* 5. SIDEBAR INFO GRUP KANAN */}
+      {/* SIDEBAR INFO GRUP KANAN */}
       {showGroupInfo && activeGroup && (
-        <div className={`w-full md:w-[280px] lg:w-[320px] border-l border-[#1e293b] bg-[#0f172a] flex-col h-full z-20 absolute right-0 md:relative ${showGroupInfo ? 'flex' : 'hidden'} shadow-2xl`}>
+        <div className={`w-full md:w-[310px] lg:w-[350px] border-l border-[#1e293b] bg-[#0f172a] flex-col h-full z-20 absolute right-0 md:relative ${showGroupInfo ? 'flex' : 'hidden'} shadow-2xl`}>
           <div className="bg-[#0f172a] h-16 flex items-center px-4 shrink-0 border-b border-[#1e293b] gap-2">
             <button onClick={() => setShowGroupInfo(false)} className="text-[#94a3b8] hover:bg-[#1e293b] p-1.5 rounded-lg"><X size={16} /></button>
-            <span className="text-[#f1f5f9] font-bold text-[13px]">Detail Percakapan</span>
+            <span className="text-[#f1f5f9] font-bold text-[13px]">Detail & Pengaturan Obrolan</span>
           </div>
 
           <div className="flex-1 overflow-y-auto bg-[#020617] hide-scroll">
@@ -1494,6 +1830,80 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {activeGroup.type === 'group' && (
+              <div className="bg-[#0f172a] p-4 mb-2 border-y border-[#1e293b]">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-[#f1f5f9] font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                    <Users size={13} className="text-[#10b981]"/> Anggota Grup ({groupMemberObjects.length})
+                  </h3>
+                  <button onClick={handleCopyGroupInviteLink} className="text-[11px] font-bold text-[#3b82f6] hover:underline flex items-center gap-1">
+                    <Link2 size={12}/> Salin Link Join
+                  </button>
+                </div>
+
+                <form onSubmit={handleSendEmailInvite} className="mb-4 bg-[#1e293b]/70 p-2.5 rounded-xl border border-[#334155]">
+                  <label className="block text-[10px] font-bold text-[#94a3b8] uppercase mb-1.5">Undang Anggota via Email</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="ketik.email@gmail.com"
+                      className="flex-1 bg-[#0f172a] border border-[#334155] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-[#10b981]"
+                    />
+                    <button type="submit" className="bg-[#10b981] hover:bg-[#059669] text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shrink-0 transition">
+                      <Mail size={13}/> Undang
+                    </button>
+                  </div>
+                </form>
+
+                <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto hide-scroll">
+                  {groupMemberObjects.map(mem => (
+                    <div key={mem.uid} className="flex items-center justify-between p-2 rounded-xl bg-[#1e293b]/50 border border-[#334155]/60">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img src={mem.photo} alt={mem.name} className="w-7 h-7 rounded-full shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-[#f1f5f9] truncate">{mem.name}</p>
+                          <p className="text-[10px] text-[#64748b] truncate">{mem.email}</p>
+                        </div>
+                      </div>
+                      {(isAdmin || activeGroup.createdBy === user.uid) && mem.uid !== user.uid && (
+                        <button
+                          onClick={() => handleRemoveMemberFromGroup(mem)}
+                          className="p-1.5 rounded-lg text-[#ef4444] hover:bg-[#ef4444]/15 transition shrink-0"
+                          title="Keluarkan dari Grup"
+                        >
+                          <UserMinus size={14}/>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {(isAdmin || activeGroup.createdBy === user.uid) && nonMemberContacts.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-[#1e293b]">
+                    <p className="text-[10px] font-bold text-[#94a3b8] uppercase mb-2">Tambahkan Kontak ke Grup:</p>
+                    <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto hide-scroll">
+                      {nonMemberContacts.map(c => (
+                        <div key={c.uid} className="flex items-center justify-between p-2 rounded-xl bg-[#020617]/60 border border-[#334155]/40">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <img src={c.photo} alt={c.name} className="w-6 h-6 rounded-full shrink-0" />
+                            <p className="text-xs text-[#cbd5e1] truncate">{c.name}</p>
+                          </div>
+                          <button
+                            onClick={() => handleAddMemberToGroup(c)}
+                            className="px-2.5 py-1 rounded-lg bg-[#3b82f6]/20 hover:bg-[#3b82f6] text-[#3b82f6] hover:text-white text-[10px] font-bold flex items-center gap-1 transition shrink-0"
+                          >
+                            <UserPlus size={12}/> Tambah
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="bg-[#0f172a] p-4 min-h-[300px] border-t border-[#1e293b]">
               <h3 className="text-[#f1f5f9] font-bold text-[11px] mb-3 uppercase tracking-wider flex items-center gap-1.5"><FileText size={12} className="text-[#3b82f6]"/> File Terkirim</h3>
