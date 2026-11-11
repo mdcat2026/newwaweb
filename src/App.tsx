@@ -24,7 +24,7 @@ const firebaseConfig = {
 // ==========================================
 const CLOUDINARY_CLOUD_NAME = 'm8cnadmw'; 
 const CLOUDINARY_UPLOAD_PRESET = 'Newwaweb'; 
-const ADMIN_EMAIL = 'buyerfood24@gmail.com';  
+const ADMIN_EMAIL = 'buyerfood24@gmail.com'; 
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -66,7 +66,6 @@ export default function App() {
   
   const [currentPinIndex, setCurrentPinIndex] = useState(0);
 
-  // STATE BARU: Hapus Pesan, Toast Info, & Notifikasi Sistem
   const [deleteModalTargets, setDeleteModalTargets] = useState(null);
   const [sysToast, setSysToast] = useState(null);
   const [notifPermission, setNotifPermission] = useState(
@@ -78,12 +77,12 @@ export default function App() {
   const groupPhotoInputRef = useRef(null);
   const textareaRef = useRef(null);
   
-  // REF UNTUK LONG PRESS, BACK NAVIGATION, & NOTIFIKASI LUAR APLIKASI
   const longPressTimerRef = useRef(null);
   const lastBackPressRef = useRef(0);
   const lastNotifiedRef = useRef({});
   const isInitialLoadRef = useRef(true);
   const navStateRef = useRef({});
+  const swRegistrationRef = useRef(null);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 
@@ -91,6 +90,44 @@ export default function App() {
     setSysToast(msg);
     setTimeout(() => setSysToast(null), 2500);
   };
+
+  // 1. REGISTRASI INLINE SERVICE WORKER UNTUK NOTIFIKASI MOBILE (ANDROID/IOS PWA)
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const swCode = `
+        self.addEventListener('install', (e) => self.skipWaiting());
+        self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+        self.addEventListener('notificationclick', (e) => {
+          e.notification.close();
+          e.waitUntil(
+            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+              if (clientList.length > 0) {
+                let client = clientList[0];
+                for (let i = 0; i < clientList.length; i++) {
+                  if (clientList[i].focused) client = clientList[i];
+                }
+                return client.focus();
+              }
+              return self.clients.openWindow('/');
+            })
+          );
+        });
+      `;
+      try {
+        const blob = new Blob([swCode], { type: 'application/javascript' });
+        const swUrl = URL.createObjectURL(blob);
+        navigator.serviceWorker.register(swUrl).then((reg) => {
+          swRegistrationRef.current = reg;
+        }).catch(() => {
+          navigator.serviceWorker.ready.then((reg) => {
+            swRegistrationRef.current = reg;
+          }).catch(() => {});
+        });
+      } catch (e) {
+        console.log("SW Inline fallback:", e);
+      }
+    }
+  }, []);
 
   // SINKRONISASI STATE KE REF UNTUK HANDLER TOMBOL BACK HP
   useEffect(() => {
@@ -106,11 +143,11 @@ export default function App() {
     };
   }, [previewMedia, pendingUploadFile, deleteModalTargets, modalConfig.type, isSelectionMode, showGroupInfo, showChatSearch, isMobileChatOpen]);
 
-  // 4. FITUR TOMBOL BACK HP & DOUBLE KLIK UNTUK KELUAR
+  // FITUR TOMBOL BACK HP & DOUBLE KLIK UNTUK KELUAR
   useEffect(() => {
     window.history.pushState({ page: 'nexus_root' }, '');
 
-    const handlePopState = (e) => {
+    const handlePopState = () => {
       const s = navStateRef.current;
 
       if (s.previewMedia) {
@@ -142,10 +179,9 @@ export default function App() {
         setIsMobileChatOpen(false);
         window.history.pushState({ page: 'nexus_root' }, '');
       } else {
-        // Berada di Home Page: Cek double-back dalam 2 detik
         const now = Date.now();
         if (now - lastBackPressRef.current < 2000) {
-          window.history.back(); // Keluar dari aplikasi
+          window.history.back();
         } else {
           lastBackPressRef.current = now;
           showToast("Tekan kembali sekali lagi untuk keluar aplikasi");
@@ -158,7 +194,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // 6. FUNGSI IZIN & PEMICU NOTIFIKASI OS SAAT DI LUAR APLIKASI
+  // FUNGSI IZIN & PEMICU NOTIFIKASI OS (MENDUKUNG DESKTOP & MOBILE HP)
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
       alert("Browser di perangkat ini tidak mendukung notifikasi sistem.");
@@ -167,33 +203,54 @@ export default function App() {
     const perm = await Notification.requestPermission();
     setNotifPermission(perm);
     if (perm === 'granted') {
-      showToast("Notifikasi luar aplikasi diaktifkan!");
+      showToast("Notifikasi HP & Desktop Aktif!");
+      triggerExternalNotification("Nexus Chat", "Notifikasi berhasil diaktifkan di perangkat ini!", user?.photoURL);
     } else {
-      showToast("Izin notifikasi ditolak.");
+      showToast("Izin notifikasi ditolak oleh browser.");
     }
   };
 
-  const triggerExternalNotification = (roomName, messageText, avatarUrl) => {
+  const triggerExternalNotification = async (roomName, messageText, avatarUrl) => {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+    const options = {
+      body: messageText || 'Mengirim lampiran file...',
+      icon: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
+      badge: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
+      tag: roomName,
+      renotify: true,
+      vibrate: [200, 100, 200]
+    };
+
     try {
-      const notif = new Notification(roomName, {
-        body: messageText || 'Mengirim lampiran file...',
-        icon: avatarUrl || 'https://api.dicebear.com/7.x/initials/svg?seed=NX',
-        tag: roomName,
-        renotify: true,
-        silent: false
-      });
-      notif.onclick = () => {
-        window.focus();
-        notif.close();
-      };
-      // Bunyi ting halus
-      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
-      audio.volume = 0.4;
-      audio.play().catch(() => {});
+      // Prioritas 1: Gunakan Service Worker (Wajib untuk Chrome Android / Mobile PWA)
+      if (swRegistrationRef.current && swRegistrationRef.current.showNotification) {
+        await swRegistrationRef.current.showNotification(roomName, options);
+      } else if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg && reg.showNotification) {
+          await reg.showNotification(roomName, options);
+        } else {
+          const notif = new Notification(roomName, options);
+          notif.onclick = () => { window.focus(); notif.close(); };
+        }
+      } else {
+        // Prioritas 2: Fallback Desktop Notification standar
+        const notif = new Notification(roomName, options);
+        notif.onclick = () => { window.focus(); notif.close(); };
+      }
     } catch (err) {
-      console.log("Notifikasi OS gagal:", err);
+      try {
+        const notif = new Notification(roomName, options);
+        notif.onclick = () => { window.focus(); notif.close(); };
+      } catch (e) {}
     }
+
+    try {
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    } catch (e) {}
   };
 
   useEffect(() => {
@@ -243,15 +300,16 @@ export default function App() {
               room.displayName = room.name;
            }
            
-           const isCurrentlyOpen = activeGroup?.id === room.id && !document.hidden;
-           room.badgeCount = isCurrentlyOpen ? 0 : (room.unreadCount?.[user.uid] || 0);
+           const isMobile = window.innerWidth <= 768;
+           const isRoomActivelyViewed = activeGroup?.id === room.id && (!isMobile || isMobileChatOpen) && document.visibilityState === 'visible';
+           room.badgeCount = isRoomActivelyViewed ? 0 : (room.unreadCount?.[user.uid] || 0);
            totalUnreadGlobal += room.badgeCount;
 
            const msgTimeStr = room.lastMessageTime?.toMillis()?.toString();
            if (!isInitialLoadRef.current && msgTimeStr && lastNotifiedRef.current[room.id] !== msgTimeStr) {
-              if (room.lastSenderId && room.lastSenderId !== user.uid) {
-                 // Pemicu Notifikasi Sistem jika user sedang di luar aplikasi / tab diminimalkan
-                 if (document.hidden || !document.hasFocus()) {
+              if (room.lastSenderId && room.lastSenderId !== user.uid && room.lastMessage) {
+                 // Pemicu Notifikasi HP/Desktop jika layar mati, pindah tab, atau sedang di ruang chat lain
+                 if (document.visibilityState !== 'visible' || !document.hasFocus() || !isRoomActivelyViewed) {
                     triggerExternalNotification(room.displayName, room.lastMessage, room.displayAvatar);
                  }
               }
@@ -267,7 +325,6 @@ export default function App() {
       isInitialLoadRef.current = false;
       setChatRooms(processedRooms);
 
-      // Update App Badge di Ikon Home Screen HP & Judul Tab
       if ('setAppBadge' in navigator) {
          if (totalUnreadGlobal > 0) navigator.setAppBadge(totalUnreadGlobal).catch(() => {});
          else navigator.clearAppBadge().catch(() => {});
@@ -275,7 +332,7 @@ export default function App() {
       document.title = totalUnreadGlobal > 0 ? `(${totalUnreadGlobal}) Nexus Chat` : 'Nexus Chat';
     });
     return () => unsub();
-  }, [user, contacts, activeGroup]);
+  }, [user, contacts, activeGroup, isMobileChatOpen]);
 
   // AUTO-READ KETIKA ROOM DIBUKA
   useEffect(() => {
@@ -291,7 +348,7 @@ export default function App() {
       setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       
-      if (!document.hidden) {
+      if (document.visibilityState === 'visible') {
          updateDoc(doc(db, 'chatRooms', activeGroup.id), { [`unreadCount.${user.uid}`]: 0 }).catch(() => {});
       }
     });
@@ -316,7 +373,6 @@ export default function App() {
     return () => window.removeEventListener('paste', handlePaste);
   }, [user, activeGroup, modalConfig]);
 
-  // 2. FITUR KLIK LAMA (LONG PRESS) DI HP UNTUK SELECTION MODE
   const handleTouchStartMsg = (msgId) => {
     if (isSelectionMode) return;
     longPressTimerRef.current = setTimeout(() => {
@@ -334,7 +390,6 @@ export default function App() {
     }
   };
 
-  // 3. FITUR SALIN PESAN (COPY)
   const handleCopyMessages = (msgArray) => {
     const textToCopy = msgArray.map(m => m.text || m.fileData || '').filter(Boolean).join('\n\n');
     if (textToCopy) {
@@ -346,7 +401,25 @@ export default function App() {
     setOpenMenuId(null);
   };
 
-  // 1 & 5. FITUR HAPUS PESAN (UNTUK SAYA ATAU UNTUK SEMUA)
+  // 2 & 3. FUNGSI SINKRONISASI PRATINJAU SIDEBAR SETELAH PESAN DIHAPUS
+  const syncSidebarLastMessage = async (roomId, remainingMessages) => {
+    if (!roomId) return;
+    if (!remainingMessages || remainingMessages.length === 0) {
+      await updateDoc(doc(db, 'chatRooms', roomId), {
+        lastMessage: ''
+      }).catch(() => {});
+    } else {
+      const lastMsg = remainingMessages[remainingMessages.length - 1];
+      const previewText = lastMsg.text
+        ? (lastMsg.text.substring(0, 35) + (lastMsg.text.length > 35 ? '...' : ''))
+        : (lastMsg.fileName ? `📎 ${lastMsg.fileName}` : 'Pesan');
+      await updateDoc(doc(db, 'chatRooms', roomId), {
+        lastMessage: previewText,
+        lastSenderId: lastMsg.uid
+      }).catch(() => {});
+    }
+  };
+
   const openDeleteConfirmation = (msgId = null) => {
     const targetIds = msgId ? [msgId] : selectedMessages;
     if (targetIds.length === 0) return;
@@ -357,12 +430,15 @@ export default function App() {
 
   const executeDeleteForMe = async () => {
     if (!deleteModalTargets || !activeGroup) return;
+    const deletedIds = deleteModalTargets.map(m => m.id);
     try {
       for (const msg of deleteModalTargets) {
         await updateDoc(doc(db, `messages_${activeGroup.id}`, msg.id), {
           deletedFor: arrayUnion(user.uid)
         });
       }
+      const remaining = messages.filter(m => !m.deletedFor?.includes(user.uid) && !deletedIds.includes(m.id));
+      await syncSidebarLastMessage(activeGroup.id, remaining);
       showToast("Pesan dihapus untuk Anda");
     } catch (err) {
       alert("Gagal menghapus pesan.");
@@ -374,10 +450,13 @@ export default function App() {
 
   const executeDeleteForEveryone = async () => {
     if (!deleteModalTargets || !activeGroup) return;
+    const deletedIds = deleteModalTargets.map(m => m.id);
     try {
       for (const msg of deleteModalTargets) {
         await deleteDoc(doc(db, `messages_${activeGroup.id}`, msg.id));
       }
+      const remaining = messages.filter(m => !deletedIds.includes(m.id) && !m.deletedFor?.includes(user.uid));
+      await syncSidebarLastMessage(activeGroup.id, remaining);
       showToast("Pesan dihapus untuk semua orang");
     } catch (err) {
       alert("Gagal menghapus pesan.");
@@ -433,7 +512,11 @@ export default function App() {
       for (const m of messages) {
         await deleteDoc(doc(db, `messages_${activeGroup.id}`, m.id));
       }
+      await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+        lastMessage: ''
+      }).catch(() => {});
       setShowRoomOptions(null);
+      showToast("Isi percakapan dibersihkan");
     }
   };
 
@@ -449,6 +532,12 @@ export default function App() {
     let msgText = newMessage;
     if (editingMessage) {
       await updateDoc(doc(db, `messages_${activeGroup.id}`, editingMessage.id), { text: msgText, isEdited: true });
+      const visible = messages.filter(m => !m.deletedFor?.includes(user.uid));
+      if (visible.length > 0 && visible[visible.length - 1].id === editingMessage.id) {
+        await updateDoc(doc(db, 'chatRooms', activeGroup.id), {
+          lastMessage: msgText.substring(0, 35) + (msgText.length > 35 ? '...' : '')
+        }).catch(() => {});
+      }
       setEditingMessage(null);
     } else {
       await addDoc(collection(db, `messages_${activeGroup.id}`), {
@@ -488,7 +577,8 @@ export default function App() {
           text: uploadCaption || '', fileData: data.secure_url, fileName: pendingUploadFile.name || 'Lampiran', isImage: isImage, uid: user.uid, senderName: user.displayName, senderAvatar: user.photoURL, timestamp: serverTimestamp(), isPinned: false, deletedFor: []
         });
         
-        const updateData = { lastMessage: `📎 ${pendingUploadFile.name}`, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+        const previewLabel = uploadCaption ? uploadCaption.substring(0, 35) : `📎 ${pendingUploadFile.name}`;
+        const updateData = { lastMessage: previewLabel, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
         const targetUids = activeGroup.type === 'group' ? contacts.map(c => c.uid) : (activeGroup.participants || []);
         targetUids.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
         await updateDoc(doc(db, 'chatRooms', activeGroup.id), updateData);
@@ -561,7 +651,9 @@ export default function App() {
         });
       }
       
-      const updateData = { lastMessage: 'Pesan diteruskan...', lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
+      const lastForwarded = msgsToForward[msgsToForward.length - 1];
+      const previewLabel = lastForwarded.text ? lastForwarded.text.substring(0, 35) : `📎 ${lastForwarded.fileName || 'Lampiran'}`;
+      const updateData = { lastMessage: previewLabel, lastSenderId: user.uid, lastMessageTime: serverTimestamp() };
       targetParticipants.forEach(pUid => { if (pUid !== user.uid) updateData[`unreadCount.${pUid}`] = increment(1); });
       await updateDoc(doc(db, 'chatRooms', roomId), updateData);
     }
@@ -659,7 +751,6 @@ export default function App() {
     );
   }
 
-  // Filter pesan yang belum dihapus untuk diri sendiri
   const visibleMessages = messages.filter(m => !m.deletedFor?.includes(user.uid));
 
   const filteredRooms = chatRooms.filter(r => r.displayName.toLowerCase().includes(sidebarSearch.toLowerCase()));
@@ -683,14 +774,14 @@ export default function App() {
   const forwardRoomList = chatRooms.filter(r => r.type === 'group').map(r => ({ id: r.id, name: r.displayName, photo: r.displayAvatar, isContact: false }));
   const allForwardOptions = [...forwardRoomList, ...forwardContactList].filter(opt => opt.name.toLowerCase().includes(contactSearch.toLowerCase()));
 
-  // Cek apakah semua pesan yang akan dihapus adalah milik sendiri atau user adalah Admin
-  const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.every(m => m.uid === user.uid || isAdmin);
+  // 3. ATURAN HAPUS UNTUK SEMUA ORANG: Berlaku untuk semua akun jika pesan yang dipilih adalah pesan miliknya sendiri (m.uid === user.uid)
+  const canDeleteForEveryone = deleteModalTargets && deleteModalTargets.length > 0 && deleteModalTargets.every(m => m.uid === user.uid);
 
   return (
     <div className="flex w-full h-[100dvh] bg-[#0f172a] font-sans overflow-hidden text-[#f1f5f9] select-none md:select-auto" onClick={() => {setOpenMenuId(null); setShowFabMenu(false); setShowRoomOptions(null);}}>
       <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
 
-      {/* TOAST MINI (SALIN & DOUBLE BACK EXIT) */}
+      {/* TOAST MINI */}
       {sysToast && (
         <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[1000] bg-[#1e293b] border border-[#3b82f6]/50 text-[#f1f5f9] px-4 py-2 rounded-full shadow-2xl text-xs font-medium pointer-events-none animate-bounce">
           {sysToast}
@@ -702,7 +793,11 @@ export default function App() {
         <div className="fixed inset-0 z-[700] bg-[#020617]/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDeleteModalTargets(null)}>
           <div className="bg-[#1e293b] w-full max-w-xs rounded-2xl border border-[#334155] shadow-2xl p-5 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-[#f1f5f9] text-sm">Hapus {deleteModalTargets.length} pesan?</h3>
-            <p className="text-xs text-[#94a3b8]">Pilih metode penghapusan pesan di bawah ini:</p>
+            <p className="text-xs text-[#94a3b8]">
+              {canDeleteForEveryone
+                ? "Pilih apakah pesan ingin dihapus untuk semua orang atau hanya untuk Anda sendiri:"
+                : "Pesan dari orang lain hanya dapat dihapus untuk tampilan Anda sendiri:"}
+            </p>
             <div className="flex flex-col gap-2 mt-2">
               {canDeleteForEveryone && (
                 <button onClick={executeDeleteForEveryone} className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#ef4444] text-white hover:bg-[#dc2626] transition text-center">
@@ -862,8 +957,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {/* Tombol Izin Notifikasi Luar Aplikasi */}
-            <button onClick={requestNotificationPermission} className={`p-2 rounded-xl transition-colors ${notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title={notifPermission === 'granted' ? 'Notifikasi Aktif' : 'Aktifkan Notifikasi HP/Browser'}>
+            <button onClick={requestNotificationPermission} className={`p-2 rounded-xl transition-colors ${notifPermission === 'granted' ? 'text-[#10b981] hover:bg-[#1e293b]' : 'text-[#eab308] bg-[#eab308]/10 hover:bg-[#eab308]/20'}`} title={notifPermission === 'granted' ? 'Notifikasi Aktif (Klik untuk tes)' : 'Aktifkan Notifikasi HP/Browser'}>
               {notifPermission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
             </button>
             <button onClick={() => signOut(auth)} className="hover:bg-[#1e293b] p-2 rounded-xl transition-colors text-[#ef4444]" title="Keluar"><LogOut size={16} /></button>
@@ -900,7 +994,7 @@ export default function App() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3 className={`truncate text-[13px] ${unreadCount > 0 ? 'font-bold text-white' : 'font-semibold text-[#f8fafc]'}`}>{room.displayName}</h3>
-                        <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Mulai obrolan...'}</p>
+                        <p className={`text-[11px] truncate pr-2 ${unreadCount > 0 ? 'text-[#3b82f6] font-medium' : 'text-[#64748b]'}`}>{room.lastMessage || 'Belum ada pesan'}</p>
                       </div>
                       {unreadCount > 0 && <div className="min-w-[20px] h-5 px-1.5 bg-[#3b82f6] rounded-full text-white text-[10px] font-bold flex items-center justify-center ml-2 shrink-0">{unreadCount > 99 ? '99+' : unreadCount}</div>}
                     </div>
